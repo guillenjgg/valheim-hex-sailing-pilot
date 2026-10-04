@@ -28,6 +28,7 @@ namespace HexSailingPilot
         private static readonly AccessTools.FieldRef<Ship, bool> ForwardPressed = AccessTools.FieldRefAccess<Ship, bool>("m_forwardPressed");
         private static readonly AccessTools.FieldRef<Ship, bool> BackwardPressed = AccessTools.FieldRefAccess<Ship, bool>("m_backwardPressed");
         private static readonly MethodInfo StopMethod = AccessTools.Method(typeof(Ship), "Stop");
+        private static readonly AccessTools.FieldRef<Ship, Rigidbody> ShipBody = AccessTools.FieldRefAccess<Ship, Rigidbody>("m_body");
 
         private static Ship _lastShip;
         private static Vector3 _courseOrigin;
@@ -136,6 +137,7 @@ namespace HexSailingPilot
             {
                 Disengage();
                 StopShip(ship);
+                BrakeShip(ship);
 
                 Plugin.Log.LogInfo("Autopilot disengaged by hotkey.");
                 return;
@@ -151,6 +153,7 @@ namespace HexSailingPilot
             if (ship != null)
             {
                 StopShip(ship);
+                BrakeShip(ship);
             }
         }
 
@@ -183,6 +186,21 @@ namespace HexSailingPilot
                 $"Ship stop requested | " +
                 $"ShipSpeed: {ShipSpeed(ship)} | " +
                 $"Rudder: {RudderValue(ship):+0.00;-0.00;0.00}");
+        }
+
+        private static void BrakeShip(Ship ship)
+        {
+            var body = ShipBody(ship);
+
+            if (body == null)
+            {
+                return;
+            }
+
+            var velocity = body.linearVelocity;
+            velocity.x *= 0.1f;
+            velocity.z *= 0.1f;
+            body.linearVelocity = velocity;
         }
 
         private static void TakeManualControl(Ship ship, Vector3 playerMoveDir)
