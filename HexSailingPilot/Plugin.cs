@@ -1,7 +1,9 @@
 ﻿using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using System.Reflection;
+using UnityEngine;
 
 namespace HexSailingPilot
 {
@@ -14,6 +16,8 @@ namespace HexSailingPilot
 
         private Harmony _harmonyInstance;
 
+        internal static ConfigEntry<KeyboardShortcut> AutoPilotHotKey;
+
         internal static ManualLogSource Log;
         internal static Plugin Instance;
 
@@ -21,6 +25,8 @@ namespace HexSailingPilot
         {
             Instance = this;
             Log = Logger;
+
+            AutoPilotHotKey = Config.Bind("Hotkeys", "AutoPilotHotKey", new KeyboardShortcut(KeyCode.P, KeyCode.LeftControl), "Hotkey to toggle autopilot.");
 
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmonyInstance = new Harmony(PluginGuid);
@@ -37,6 +43,21 @@ namespace HexSailingPilot
             _harmonyInstance = null;
             Instance = null;
             Log = null;
+        }
+
+        private void Update()
+        {
+            Player player = Player.m_localPlayer;
+
+            if (player == null || player.GetControlledShip() == null)
+            {
+                return;
+            }
+
+            if (AutoPilotHotKey.Value.IsDown())
+            {
+                SailingPilotController.Toggle();
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 ﻿using HarmonyLib;
+using System.Reflection;
 using UnityEngine;
 
 namespace HexSailingPilot
@@ -6,54 +7,65 @@ namespace HexSailingPilot
     internal static class SailingPilotController
     {
         private const float TestDestinationDistance = 150f;
-        private const float ApproachDistance = 30f;
-        private const float ArrivalDistance = 5f;
+        private const float ArrivalDistance = 10f;
         private const float LookAheadDistance = 50f;
         private const float HeadingTolerance = 2f;
         private const float FullRudderHeadingError = 20f;
         private const float RudderTolerance = 0.02f;
+        private const float ManualSteeringThreshold = 0.5f;
+        private const float ManualSpeedThreshold = 0.5f;
 
-        private enum PilotState
+        private enum PilotStateEnum
         {
+            Inactive,
             Sailing,
-            Approaching,
             Stopping,
             Complete
         }
 
         private static readonly AccessTools.FieldRef<Ship, float> RudderValue = AccessTools.FieldRefAccess<Ship, float>("m_rudderValue");
-
         private static readonly AccessTools.FieldRef<Ship, Ship.Speed> ShipSpeed = AccessTools.FieldRefAccess<Ship, Ship.Speed>("m_speed");
+        private static readonly AccessTools.FieldRef<Ship, bool> ForwardPressed = AccessTools.FieldRefAccess<Ship, bool>("m_forwardPressed");
+        private static readonly AccessTools.FieldRef<Ship, bool> BackwardPressed = AccessTools.FieldRefAccess<Ship, bool>("m_backwardPressed");
+        private static readonly MethodInfo StopMethod = AccessTools.Method(typeof(Ship), "Stop");
 
         private static Ship _lastShip;
         private static Vector3 _courseOrigin;
         private static Vector3 _courseDirection;
         private static Vector3 _destination;
         private static float _courseLength;
-        private static PilotState _state;
+        private static PilotStateEnum _state = PilotStateEnum.Inactive;
+        private static Ship _controlledShip;
 
-        internal static void ApplyControls(Ship ship, ref Vector3 moveDir)
+        internal static void ApplyControls(Ship ship, Vector3 playerMoveDir, ref Vector3 moveDir)
         {
             if (ship == null)
             {
                 return;
             }
 
+            _controlledShip = ship;
+
+            if (!IsActive())
+            {
+                return;
+            }
+
             if (_lastShip != ship)
             {
-                StartCourse(ship);
+                Disengage();
+                return;
+            }
+
+            if (HasManualInput(playerMoveDir))
+            {
+                TakeManualControl(ship, playerMoveDir);
+                return;
             }
 
             var rudderValue = RudderValue(ship);
 
-            if (_state == PilotState.Complete)
-            {
-                moveDir.x = 0f;
-                moveDir.z = 0f;
-                return;
-            }
-
-            if (_state == PilotState.Stopping)
+            if (_state == PilotStateEnum.Stopping)
             {
                 ApplyStop(ship, rudderValue, ref moveDir);
                 return;
@@ -63,70 +75,21 @@ namespace HexSailingPilot
 
             if (distanceToDestination <= ArrivalDistance)
             {
-                _state = PilotState.Stopping;
+                _state = PilotStateEnum.Stopping;
 
                 Plugin.Log.LogInfo(
                     $"Pilot arrived | " +
                     $"Distance: {distanceToDestination:F1}m | " +
-                    $"ShipSpeed: {ShipSpeed(ship)} | " +
-                    $"Rudder: {rudderValue:+0.00;-0.00;0.00}");
+                    $"ShipSpeed: {ShipSpeed(ship)}");
 
                 ApplyStop(ship, rudderValue, ref moveDir);
                 return;
             }
 
-            if (_state == PilotState.Sailing &&
-                distanceToDestination <= ApproachDistance)
-            {
-                _state = PilotState.Approaching;
+            moveDir.z = 1f;
 
-                Plugin.Log.LogInfo(
-                    $"Pilot approaching | " +
-                    $"Distance: {distanceToDestination:F1}m | " +
-                    $"ShipSpeed: {ShipSpeed(ship)}");
-            }
-
-            ApplyThrottle(ship, ref moveDir);
-            ApplySteering(ship, rudderValue, distanceToDestination, ref moveDir);
-        }
-
-        private static void ApplyThrottle(
-            Ship ship,
-            ref Vector3 moveDir)
-        {
-            if (_state == PilotState.Sailing)
-            {
-                moveDir.z = 1f;
-                return;
-            }
-
-            if (_state == PilotState.Approaching)
-            {
-                if (ShipSpeed(ship) > Ship.Speed.Slow)
-                {
-                    moveDir.z = -1f;
-                    return;
-                }
-
-                if (ShipSpeed(ship) < Ship.Speed.Slow)
-                {
-                    moveDir.z = 1f;
-                    return;
-                }
-
-                moveDir.z = 0f;
-            }
-        }
-
-        private static void ApplySteering(
-            Ship ship,
-            float rudderValue,
-            float distanceToDestination,
-            ref Vector3 moveDir)
-        {
             var lookAheadPoint = GetLookAheadPoint(ship);
             var directionToTarget = lookAheadPoint - ship.transform.position;
-
             directionToTarget.y = 0f;
 
             if (directionToTarget.sqrMagnitude <= 0.001f)
@@ -137,26 +100,16 @@ namespace HexSailingPilot
 
             var targetHeading = GetHeading(directionToTarget);
             var currentHeading = GetHeading(ship.transform.forward);
-
-            var headingError = Mathf.DeltaAngle(
-                currentHeading,
-                targetHeading);
-
+            var headingError = Mathf.DeltaAngle(currentHeading, targetHeading);
             var targetRudder = GetTargetRudder(headingError);
 
-            SetRudderInput(
-                targetRudder,
-                rudderValue,
-                ref moveDir);
+            SetRudderInput(targetRudder, rudderValue, ref moveDir);
 
-            var crossTrackError =
-                GetCrossTrackError(ship.transform.position);
+            var crossTrackError = GetCrossTrackError(ship.transform.position);
 
             Plugin.Log.LogInfo(
                 $"Pilot course | " +
-                $"State: {_state} | " +
                 $"Distance: {distanceToDestination:F1}m | " +
-                $"Speed: {ShipSpeed(ship)} | " +
                 $"Target: {targetHeading:F1}° | " +
                 $"Current: {currentHeading:F1}° | " +
                 $"Error: {headingError:+0.0;-0.0;0.0}° | " +
@@ -164,6 +117,103 @@ namespace HexSailingPilot
                 $"TargetRudder: {targetRudder:+0.00;-0.00;0.00} | " +
                 $"Rudder: {rudderValue:+0.00;-0.00;0.00} | " +
                 $"Input: {moveDir.x:+0.0;-0.0;0.0}");
+        }
+
+        internal static bool IsActive()
+        {
+            return _state == PilotStateEnum.Sailing ||
+                   _state == PilotStateEnum.Stopping;
+        }
+
+        internal static void Toggle(Ship ship)
+        {
+            if (ship == null)
+            {
+                return;
+            }
+
+            if (IsActive())
+            {
+                Disengage();
+                StopShip(ship);
+
+                Plugin.Log.LogInfo("Autopilot disengaged by hotkey.");
+                return;
+            }
+
+            StartCourse(ship);
+        }
+
+        internal static void Stop(Ship ship)
+        {
+            Disengage();
+
+            if (ship != null)
+            {
+                StopShip(ship);
+            }
+        }
+
+        internal static void Toggle()
+        {
+            if (_controlledShip == null)
+            {
+                return;
+            }
+
+            Toggle(_controlledShip);
+        }
+
+        private static void StopShip(Ship ship)
+        {
+            if (ship == null)
+            {
+                return;
+            }
+
+            if (StopMethod == null)
+            {
+                Plugin.Log.LogWarning("Ship.Stop method was not found.");
+                return;
+            }
+
+            StopMethod.Invoke(ship, null);
+
+            Plugin.Log.LogInfo(
+                $"Ship stop requested | " +
+                $"ShipSpeed: {ShipSpeed(ship)} | " +
+                $"Rudder: {RudderValue(ship):+0.00;-0.00;0.00}");
+        }
+
+        private static void TakeManualControl(Ship ship, Vector3 playerMoveDir)
+        {
+            ForwardPressed(ship) = false;
+            BackwardPressed(ship) = false;
+
+            Plugin.Log.LogInfo(
+                $"Pilot manual takeover | " +
+                $"PlayerInput: ({playerMoveDir.x:+0.00;-0.00;0.00}, {playerMoveDir.z:+0.00;-0.00;0.00}) | " +
+                $"ShipSpeed: {ShipSpeed(ship)} | " +
+                $"Rudder: {RudderValue(ship):+0.00;-0.00;0.00}");
+
+            Disengage();
+        }
+
+        private static void Disengage()
+        {
+            ClearCourse();
+
+            _lastShip = null;
+            _state = PilotStateEnum.Inactive;
+
+            Plugin.Log.LogInfo("Pilot disengaged");
+        }
+
+        private static bool HasManualInput(Vector3 playerMoveDir)
+        {
+            return Mathf.Abs(playerMoveDir.x) > ManualSteeringThreshold ||
+                   playerMoveDir.z > ManualSpeedThreshold ||
+                   playerMoveDir.z < -ManualSpeedThreshold;
         }
 
         private static void ApplyStop(Ship ship, float rudderValue, ref Vector3 moveDir)
@@ -197,7 +247,7 @@ namespace HexSailingPilot
             }
 
             moveDir.x = 0f;
-            _state = PilotState.Complete;
+            _state = PilotStateEnum.Complete;
 
             Plugin.Log.LogInfo(
                 $"Pilot complete | " +
@@ -209,7 +259,7 @@ namespace HexSailingPilot
         private static void StartCourse(Ship ship)
         {
             _lastShip = ship;
-            _state = PilotState.Sailing;
+            _state = PilotStateEnum.Sailing;
 
             _courseOrigin = ship.transform.position;
 
@@ -217,10 +267,7 @@ namespace HexSailingPilot
             _courseDirection.y = 0f;
             _courseDirection.Normalize();
 
-            _destination =
-                _courseOrigin +
-                _courseDirection * TestDestinationDistance;
-
+            _destination = _courseOrigin + _courseDirection * TestDestinationDistance;
             _courseLength = TestDestinationDistance;
 
             Plugin.Log.LogInfo(
@@ -231,35 +278,28 @@ namespace HexSailingPilot
                 $"Heading: {GetHeading(_courseDirection):F1}°");
         }
 
+        private static void ClearCourse()
+        {
+            _courseOrigin = Vector3.zero;
+            _courseDirection = Vector3.zero;
+            _destination = Vector3.zero;
+            _courseLength = 0f;
+        }
+
         private static Vector3 GetLookAheadPoint(Ship ship)
         {
-            var fromOrigin =
-                ship.transform.position -
-                _courseOrigin;
-
+            var fromOrigin = ship.transform.position - _courseOrigin;
             fromOrigin.y = 0f;
 
-            var distanceAlongCourse =
-                Vector3.Dot(
-                    fromOrigin,
-                    _courseDirection);
+            var distanceAlongCourse = Vector3.Dot(fromOrigin, _courseDirection);
+            var lookAheadDistance = Mathf.Min(distanceAlongCourse + LookAheadDistance, _courseLength);
 
-            var lookAheadDistance =
-                Mathf.Min(
-                    distanceAlongCourse + LookAheadDistance,
-                    _courseLength);
-
-            return
-                _courseOrigin +
-                _courseDirection * lookAheadDistance;
+            return _courseOrigin + _courseDirection * lookAheadDistance;
         }
 
         private static float GetDistanceToDestination(Ship ship)
         {
-            var offset =
-                _destination -
-                ship.transform.position;
-
+            var offset = _destination - ship.transform.position;
             offset.y = 0f;
 
             return offset.magnitude;
@@ -267,17 +307,10 @@ namespace HexSailingPilot
 
         private static float GetCrossTrackError(Vector3 position)
         {
-            var fromOrigin =
-                position -
-                _courseOrigin;
-
+            var fromOrigin = position - _courseOrigin;
             fromOrigin.y = 0f;
 
-            return Vector3.Dot(
-                fromOrigin,
-                Vector3.Cross(
-                    Vector3.up,
-                    _courseDirection));
+            return Vector3.Dot(fromOrigin, Vector3.Cross(Vector3.up, _courseDirection));
         }
 
         private static float GetTargetRudder(float headingError)
@@ -287,20 +320,12 @@ namespace HexSailingPilot
                 return 0f;
             }
 
-            return Mathf.Clamp(
-                headingError / FullRudderHeadingError,
-                -1f,
-                1f);
+            return Mathf.Clamp(headingError / FullRudderHeadingError, -1f, 1f);
         }
 
-        private static void SetRudderInput(
-            float targetRudder,
-            float rudderValue,
-            ref Vector3 moveDir)
+        private static void SetRudderInput(float targetRudder, float rudderValue, ref Vector3 moveDir)
         {
-            var rudderError =
-                targetRudder -
-                rudderValue;
+            var rudderError = targetRudder - rudderValue;
 
             if (Mathf.Abs(rudderError) <= RudderTolerance)
             {
@@ -322,11 +347,7 @@ namespace HexSailingPilot
 
             direction.Normalize();
 
-            var heading =
-                Mathf.Atan2(
-                    direction.x,
-                    direction.z) *
-                Mathf.Rad2Deg;
+            var heading = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
 
             return NormalizeHeading(heading);
         }
@@ -341,21 +362,6 @@ namespace HexSailingPilot
             }
 
             return heading;
-        }
-
-        internal static void Stop(Ship ship)
-        {
-            _lastShip = null;
-            _courseOrigin = Vector3.zero;
-            _courseDirection = Vector3.zero;
-            _destination = Vector3.zero;
-            _courseLength = 0f;
-            _state = PilotState.Complete;
-
-            if (ship != null)
-            {
-                ship.Stop();
-            }
         }
     }
 }
