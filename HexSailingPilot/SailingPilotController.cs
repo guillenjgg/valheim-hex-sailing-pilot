@@ -16,8 +16,7 @@ namespace HexSailingPilot
         {
             Inactive,
             Sailing,
-            Stopping,
-            Complete
+            Stopping
         }
 
         private static Ship _lastShip;
@@ -252,13 +251,16 @@ namespace HexSailingPilot
             }
 
             moveDir.x = 0f;
-            _state = PilotStateEnum.Complete;
 
             Plugin.Log.LogInfo(
                 $"Pilot complete | " +
                 $"Distance: {SteeringCalculator.GetDistanceToDestination(_course, ship.transform.position):F1}m | " +
                 $"ShipSpeed: {ShipAccessor.ShipSpeed(ship)} | " +
                 $"Rudder: {rudderValue:+0.00;-0.00;0.00}");
+
+            ClearCourse();
+            _lastShip = null;
+            _state = PilotStateEnum.Inactive;
         }
 
         private static void StartCourse(Ship ship)
