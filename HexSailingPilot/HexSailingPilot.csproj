@@ -17,7 +17,7 @@
     <DebugSymbols>false</DebugSymbols>
     <DebugType>none</DebugType>
     <Optimize>false</Optimize>
-    <OutputPath>..\..\..\debug_builds\HexSailingPilot\</OutputPath>
+    <OutputPath>..\..\..\..\..\AppData\Roaming\r2modmanPlus-local\Valheim\profiles\Dev\BepInEx\plugins\Hex_Viking-HexSailingPilot\</OutputPath>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
@@ -77,6 +77,8 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="HexSailingPilot\Navigation\ShallowWaterEscapeDirectionEnum.cs" />
+    <Compile Include="HexSailingPilot\Navigation\ShallowWaterEscapeDirectionSelector.cs" />
     <Compile Include="HexSailingPilot\Navigation\SteeringCalculator.cs" />
     <Compile Include="HexSailingPilot\ShipAccess\ShipAccessor.cs" />
     <Compile Include="Navigation\SailingCourseModel.cs" />

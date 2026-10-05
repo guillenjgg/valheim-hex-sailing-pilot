@@ -1,6 +1,7 @@
 ﻿using HexSailingPilot.Navigation;
 using HexSailingPilot.ShipAccess;
 using HexSailingPilot.Terrain;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace HexSailingPilot
@@ -208,6 +209,7 @@ namespace HexSailingPilot
             {
                 Plugin.Log.LogInfo(
                     $"Depth scan | " +
+                    $"Direction: Current | " +
                     $"Distance: 0m | " +
                     $"Depth: {currentDepth:F1}m");
             }
@@ -215,38 +217,87 @@ namespace HexSailingPilot
             {
                 Plugin.Log.LogInfo(
                     $"Depth scan | " +
+                    $"Direction: Current | " +
                     $"Distance: 0m | " +
                     $"No depth data");
             }
 
-            var results = WaterDepthScanner.ScanForward(ship);
-            bool unsafeWaterDetected = false;
+            var forwardResults = WaterDepthScanner.ScanForward(ship);
+            var backwardResults = WaterDepthScanner.ScanBackward(ship);
+            var leftResults = WaterDepthScanner.ScanLeft(ship);
+            var rightResults = WaterDepthScanner.ScanRight(ship);
 
+            LogDepthScan("Forward", forwardResults);
+            LogDepthScan("Backward", backwardResults);
+            LogDepthScan("Left", leftResults);
+            LogDepthScan("Right", rightResults);
+
+            LogEscapeDirection("Forward", forwardResults);
+            LogEscapeDirection("Backward", backwardResults);
+            LogEscapeDirection("Left", leftResults);
+            LogEscapeDirection("Right", rightResults);
+
+            var escapeDirection = ShallowWaterEscapeDirectionSelector.Select(
+                forwardResults,
+                backwardResults,
+                leftResults,
+                rightResults);
+
+            Plugin.Log.LogInfo(
+                $"Avoidance decision | " +
+                $"Direction: {escapeDirection}");
+
+            foreach (var result in forwardResults)
+            {
+                if (result.HasDepth && !result.IsSafe)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void LogDepthScan(string direction, List<WaterDepthScanModel> results)
+        {
             foreach (var result in results)
             {
                 if (result.HasDepth)
                 {
                     Plugin.Log.LogInfo(
                         $"Depth scan | " +
+                        $"Direction: {direction} | " +
                         $"Distance: {result.Distance:F0}m | " +
                         $"Depth: {result.Depth:F1}m | " +
                         $"Safe: {result.IsSafe}");
-
-                    if (!result.IsSafe)
-                    {
-                        unsafeWaterDetected = true;
-                    }
                 }
                 else
                 {
                     Plugin.Log.LogInfo(
                         $"Depth scan | " +
+                        $"Direction: {direction} | " +
                         $"Distance: {result.Distance:F0}m | " +
                         $"No depth data");
                 }
             }
+        }
 
-            return unsafeWaterDetected;
+        private static void LogEscapeDirection(string direction, List<WaterDepthScanModel> results)
+        {
+            if (!ShallowWaterEscapeDirectionSelector.TryGetScore(results, out float score))
+            {
+                Plugin.Log.LogInfo(
+                    $"Avoidance direction | " +
+                    $"Direction: {direction} | " +
+                    $"Unsafe");
+
+                return;
+            }
+
+            Plugin.Log.LogInfo(
+                $"Avoidance direction | " +
+                $"Direction: {direction} | " +
+                $"Score: {score:+0.0;-0.0;0.0}");
         }
 
         private static void StopShip(Ship ship)

@@ -5,7 +5,8 @@ namespace HexSailingPilot.Terrain
 {
     internal static class WaterDepthScanner
     {
-        private const float MinimumSafeDepth = 5f;
+        private const float MinimumNavigableDepth = 1f;
+        private const float PreferredDepth = 5f;
 
         private static readonly float[] ScanDistances =
         {
@@ -16,25 +17,22 @@ namespace HexSailingPilot.Terrain
 
         internal static List<WaterDepthScanModel> ScanForward(Ship ship)
         {
-            var results = new List<WaterDepthScanModel>(ScanDistances.Length);
-            WaterVolume waterVolume = null;
+            return ScanDirection(ship, ship.transform.forward);
+        }
 
-            foreach (float distance in ScanDistances)
-            {
-                Vector3 position = ship.transform.position + ship.transform.forward * distance;
+        internal static List<WaterDepthScanModel> ScanBackward(Ship ship)
+        {
+            return ScanDirection(ship, -ship.transform.forward);
+        }
 
-                bool hasDepth = TryGetDepth(position, ref waterVolume, out float depth);
-                bool isSafe = hasDepth && IsSafeDepth(depth);
+        internal static List<WaterDepthScanModel> ScanLeft(Ship ship)
+        {
+            return ScanDirection(ship, -ship.transform.right);
+        }
 
-                results.Add(new WaterDepthScanModel(
-                    distance,
-                    position,
-                    hasDepth,
-                    depth,
-                    isSafe));
-            }
-
-            return results;
+        internal static List<WaterDepthScanModel> ScanRight(Ship ship)
+        {
+            return ScanDirection(ship, ship.transform.right);
         }
 
         internal static bool TryGetDepthUnderShip(Ship ship, out float depth)
@@ -58,14 +56,19 @@ namespace HexSailingPilot.Terrain
         {
             depth = 0f;
 
-            float waterLevel = Floating.GetWaterLevel(position, ref waterVolume);
+            if (ZoneSystem.instance == null)
+            {
+                return false;
+            }
+
+            var waterLevel = Floating.GetWaterLevel(position, ref waterVolume);
 
             if (waterLevel <= -10000f)
             {
                 return false;
             }
 
-            if (!Heightmap.GetHeight(position, out float terrainHeight))
+            if (!ZoneSystem.instance.GetGroundHeight(position, out var terrainHeight))
             {
                 return false;
             }
@@ -74,9 +77,40 @@ namespace HexSailingPilot.Terrain
             return true;
         }
 
-        internal static bool IsSafeDepth(float depth)
+        internal static bool IsNavigableDepth(float depth)
         {
-            return depth >= MinimumSafeDepth;
+            return depth >= MinimumNavigableDepth;
+        }
+
+        internal static bool IsPreferredDepth(float depth)
+        {
+            return depth >= PreferredDepth;
+        }
+
+        private static List<WaterDepthScanModel> ScanDirection(Ship ship, Vector3 direction)
+        {
+            var results = new List<WaterDepthScanModel>(ScanDistances.Length);
+            WaterVolume waterVolume = null;
+
+            direction.y = 0f;
+            direction.Normalize();
+
+            foreach (var distance in ScanDistances)
+            {
+                var position = ship.transform.position + direction * distance;
+
+                var hasDepth = TryGetDepth(position, ref waterVolume, out var depth);
+                var isSafe = hasDepth && IsNavigableDepth(depth);
+
+                results.Add(new WaterDepthScanModel(
+                    distance,
+                    position,
+                    hasDepth,
+                    depth,
+                    isSafe));
+            }
+
+            return results;
         }
     }
 }
