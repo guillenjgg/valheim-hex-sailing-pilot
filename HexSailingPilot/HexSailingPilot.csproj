@@ -88,6 +88,8 @@
     <Compile Include="SailingPilotController.cs" />
     <Compile Include="ShipObstacleScanner.cs" />
     <Compile Include="ShipObstacleScanResult.cs" />
+    <Compile Include="Terrain\WaterDepthScanModel.cs" />
+    <Compile Include="Terrain\WaterDepthScanner.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="CHANGELOG.md">

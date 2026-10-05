@@ -1,7 +1,7 @@
-﻿using HarmonyLib;
-using UnityEngine;
-using HexSailingPilot.Navigation;
+﻿using HexSailingPilot.Navigation;
 using HexSailingPilot.ShipAccess;
+using HexSailingPilot.Terrain;
+using UnityEngine;
 
 namespace HexSailingPilot
 {
@@ -11,6 +11,7 @@ namespace HexSailingPilot
         private const float ArrivalDistance = 10f;
         private const float ManualSteeringThreshold = 0.5f;
         private const float ManualSpeedThreshold = 0.5f;
+        private const float DepthScanInterval = 1f;
 
         private enum PilotStateEnum
         {
@@ -23,6 +24,7 @@ namespace HexSailingPilot
         private static PilotStateEnum _state = PilotStateEnum.Inactive;
         private static Ship _controlledShip;
         private static SailingCourseModel _course;
+        private static float _nextDepthScanTime;
 
         internal static void ApplyControls(Ship ship, Vector3 playerMoveDir, ref Vector3 moveDir)
         {
@@ -50,7 +52,21 @@ namespace HexSailingPilot
                 return;
             }
 
+            bool unsafeWaterDetected = ScanDepth(ship);
+
             var rudderValue = ShipAccessor.RudderValue(ship);
+
+            if (_state == PilotStateEnum.Sailing && unsafeWaterDetected)
+            {
+                _state = PilotStateEnum.Stopping;
+
+                Plugin.Log.LogInfo(
+                    $"Pilot shallow water detected | " +
+                    $"ShipSpeed: {ShipAccessor.ShipSpeed(ship)}");
+
+                ApplyStop(ship, rudderValue, ref moveDir);
+                return;
+            }
 
             if (_state == PilotStateEnum.Stopping)
             {
@@ -151,6 +167,60 @@ namespace HexSailingPilot
             }
 
             Toggle(_controlledShip);
+        }
+
+        private static bool ScanDepth(Ship ship)
+        {
+            if (Time.time < _nextDepthScanTime)
+            {
+                return false;
+            }
+
+            _nextDepthScanTime = Time.time + DepthScanInterval;
+
+            if (WaterDepthScanner.TryGetDepthUnderShip(ship, out float currentDepth))
+            {
+                Plugin.Log.LogInfo(
+                    $"Depth scan | " +
+                    $"Distance: 0m | " +
+                    $"Depth: {currentDepth:F1}m");
+            }
+            else
+            {
+                Plugin.Log.LogInfo(
+                    $"Depth scan | " +
+                    $"Distance: 0m | " +
+                    $"No depth data");
+            }
+
+            var results = WaterDepthScanner.ScanForward(ship);
+            bool unsafeWaterDetected = false;
+
+            foreach (var result in results)
+            {
+                if (result.HasDepth)
+                {
+                    Plugin.Log.LogInfo(
+                        $"Depth scan | " +
+                        $"Distance: {result.Distance:F0}m | " +
+                        $"Depth: {result.Depth:F1}m | " +
+                        $"Safe: {result.IsSafe}");
+
+                    if (!result.IsSafe)
+                    {
+                        unsafeWaterDetected = true;
+                    }
+                }
+                else
+                {
+                    Plugin.Log.LogInfo(
+                        $"Depth scan | " +
+                        $"Distance: {result.Distance:F0}m | " +
+                        $"No depth data");
+                }
+            }
+
+            return unsafeWaterDetected;
         }
 
         private static void StopShip(Ship ship)
@@ -267,8 +337,12 @@ namespace HexSailingPilot
         {
             _lastShip = ship;
             _state = PilotStateEnum.Sailing;
+            _nextDepthScanTime = 0f;
 
-            _course = new SailingCourseModel(ship.transform.position, ship.transform.forward, TestDestinationDistance);
+            _course = new SailingCourseModel(
+                ship.transform.position,
+                ship.transform.forward,
+                TestDestinationDistance);
 
             Plugin.Log.LogInfo(
                 $"Pilot course started | " +
