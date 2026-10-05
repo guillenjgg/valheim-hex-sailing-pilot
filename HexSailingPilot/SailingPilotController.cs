@@ -17,11 +17,20 @@ namespace HexSailingPilot
         {
             Inactive,
             Sailing,
-            Stopping
+            Stopping,
+            AvoidingShallowWater
+        }
+
+        private enum StopReasonEnum
+        {
+            None,
+            Arrival,
+            ShallowWater
         }
 
         private static Ship _lastShip;
         private static PilotStateEnum _state = PilotStateEnum.Inactive;
+        private static StopReasonEnum _stopReason = StopReasonEnum.None;
         private static Ship _controlledShip;
         private static SailingCourseModel _course;
         private static float _nextDepthScanTime;
@@ -52,13 +61,27 @@ namespace HexSailingPilot
                 return;
             }
 
-            bool unsafeWaterDetected = ScanDepth(ship);
-
             var rudderValue = ShipAccessor.RudderValue(ship);
 
-            if (_state == PilotStateEnum.Sailing && unsafeWaterDetected)
+            if (_state == PilotStateEnum.Stopping)
+            {
+                ApplyStop(ship, rudderValue, ref moveDir);
+                return;
+            }
+
+            if (_state == PilotStateEnum.AvoidingShallowWater)
+            {
+                moveDir.x = 0f;
+                moveDir.z = 0f;
+                return;
+            }
+
+            bool unsafeWaterDetected = ScanDepth(ship);
+
+            if (unsafeWaterDetected)
             {
                 _state = PilotStateEnum.Stopping;
+                _stopReason = StopReasonEnum.ShallowWater;
 
                 Plugin.Log.LogInfo(
                     $"Pilot shallow water detected | " +
@@ -68,17 +91,12 @@ namespace HexSailingPilot
                 return;
             }
 
-            if (_state == PilotStateEnum.Stopping)
-            {
-                ApplyStop(ship, rudderValue, ref moveDir);
-                return;
-            }
-
             var distanceToDestination = SteeringCalculator.GetDistanceToDestination(_course, ship.transform.position);
 
             if (distanceToDestination <= ArrivalDistance)
             {
                 _state = PilotStateEnum.Stopping;
+                _stopReason = StopReasonEnum.Arrival;
 
                 Plugin.Log.LogInfo(
                     $"Pilot arrived | " +
@@ -125,7 +143,8 @@ namespace HexSailingPilot
         internal static bool IsActive()
         {
             return _state == PilotStateEnum.Sailing ||
-                   _state == PilotStateEnum.Stopping;
+                   _state == PilotStateEnum.Stopping ||
+                   _state == PilotStateEnum.AvoidingShallowWater;
         }
 
         internal static void Toggle(Ship ship)
@@ -279,6 +298,7 @@ namespace HexSailingPilot
 
             _lastShip = null;
             _state = PilotStateEnum.Inactive;
+            _stopReason = StopReasonEnum.None;
 
             Plugin.Log.LogInfo("Pilot disengaged");
         }
@@ -322,6 +342,19 @@ namespace HexSailingPilot
 
             moveDir.x = 0f;
 
+            if (_stopReason == StopReasonEnum.ShallowWater)
+            {
+                _state = PilotStateEnum.AvoidingShallowWater;
+                _stopReason = StopReasonEnum.None;
+
+                Plugin.Log.LogInfo(
+                    $"Pilot stopped for shallow water | " +
+                    $"Distance: {SteeringCalculator.GetDistanceToDestination(_course, ship.transform.position):F1}m | " +
+                    $"ShipSpeed: {ShipAccessor.ShipSpeed(ship)}");
+
+                return;
+            }
+
             Plugin.Log.LogInfo(
                 $"Pilot complete | " +
                 $"Distance: {SteeringCalculator.GetDistanceToDestination(_course, ship.transform.position):F1}m | " +
@@ -331,12 +364,14 @@ namespace HexSailingPilot
             ClearCourse();
             _lastShip = null;
             _state = PilotStateEnum.Inactive;
+            _stopReason = StopReasonEnum.None;
         }
 
         private static void StartCourse(Ship ship)
         {
             _lastShip = ship;
             _state = PilotStateEnum.Sailing;
+            _stopReason = StopReasonEnum.None;
             _nextDepthScanTime = 0f;
 
             _course = new SailingCourseModel(
