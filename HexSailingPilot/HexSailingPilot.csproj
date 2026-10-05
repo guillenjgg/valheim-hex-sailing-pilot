@@ -81,6 +81,7 @@
     <Compile Include="HexSailingPilot\ShipAccess\ShipAccessor.cs" />
     <Compile Include="Navigation\SailingCourseModel.cs" />
     <Compile Include="Patches\HudAwakePatch.cs" />
+    <Compile Include="Patches\IsProtectedShip.cs" />
     <Compile Include="Patches\ShipControllsOnUseStopPatch.cs" />
     <Compile Include="Patches\ShipControllsPatch.cs" />
     <Compile Include="Plugin.cs" />

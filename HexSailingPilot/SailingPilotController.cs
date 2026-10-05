@@ -188,6 +188,13 @@ namespace HexSailingPilot
             Toggle(_controlledShip);
         }
 
+        internal static bool IsProtectedShip(Ship ship)
+        {
+            return IsActive() &&
+                   ship != null &&
+                   ship == _controlledShip;
+        }
+
         private static bool ScanDepth(Ship ship)
         {
             if (Time.time < _nextDepthScanTime)
