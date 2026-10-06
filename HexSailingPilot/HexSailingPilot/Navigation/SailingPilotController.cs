@@ -12,6 +12,7 @@ namespace HexSailingPilot.Navigation
         private const float DepthScanInterval = 1f;
         private const float DetourRecheckInterval = 1f;
         private const float MinimumDetourDuration = 3f;
+        private const float MinimumDetourDistance = 25f;
         private const int RequiredClearConfirmations = 3;
 
         private enum PilotStateEnum
@@ -35,6 +36,7 @@ namespace HexSailingPilot.Navigation
         private static Ship _controlledShip;
         private static SailingCourseModel _course;
         private static Vector3 _detourDirection;
+        private static Vector3 _detourStartPosition;
         private static float _nextDepthScanTime;
         private static float _nextDetourRecheckTime;
         private static float _detourStartTime;
@@ -48,6 +50,13 @@ namespace HexSailingPilot.Navigation
             }
 
             _controlledShip = ship;
+
+            if (IsActive() && CapsizeProtectionController.IsCorrectionNeeded(ship))
+            {
+                Plugin.Log.LogInfo(
+                    $"Capsize protection | " +
+                    $"Tilt: {CapsizeProtectionController.GetTiltAngle(ship):F1}°");
+            }
 
             if (!IsActive())
             {
@@ -197,6 +206,7 @@ namespace HexSailingPilot.Navigation
                 _nextDetourRecheckTime = Time.time + DetourRecheckInterval;
 
                 var detourElapsed = Time.time - _detourStartTime;
+                var detourDistance = GetDetourDistance(ship);
                 var pathClearNow = IsDestinationPathClear(ship);
 
                 if (pathClearNow)
@@ -208,19 +218,24 @@ namespace HexSailingPilot.Navigation
                     _destinationClearStreak = 0;
                 }
 
-                var confirmedClear = detourElapsed >= MinimumDetourDuration &&
-                                      _destinationClearStreak >= RequiredClearConfirmations;
+                var minimumProgressReached = detourElapsed >= MinimumDetourDuration &&
+                                             detourDistance >= MinimumDetourDistance;
+
+                var confirmedClear = minimumProgressReached &&
+                                     _destinationClearStreak >= RequiredClearConfirmations;
 
                 if (confirmedClear)
                 {
                     _state = PilotStateEnum.Sailing;
                     _detourDirection = Vector3.zero;
+                    _detourStartPosition = Vector3.zero;
                     _destinationClearStreak = 0;
 
                     Plugin.Log.LogInfo(
                         $"Detour complete | " +
                         $"Destination path clear | " +
                         $"Elapsed: {detourElapsed:F1}s | " +
+                        $"Distance: {detourDistance:F1}m | " +
                         $"ConfirmedStreak: {RequiredClearConfirmations}");
                     return;
                 }
@@ -255,6 +270,7 @@ namespace HexSailingPilot.Navigation
             }
 
             _detourDirection = detourDirection;
+            _detourStartPosition = ship.transform.position;
             _state = PilotStateEnum.Detouring;
             _nextDetourRecheckTime = Time.time + DetourRecheckInterval;
             _detourStartTime = Time.time;
@@ -266,6 +282,14 @@ namespace HexSailingPilot.Navigation
                 $"Heading: {SteeringCalculator.GetHeading(_detourDirection):F1}°");
 
             return true;
+        }
+
+        private static float GetDetourDistance(Ship ship)
+        {
+            var offset = ship.transform.position - _detourStartPosition;
+            offset.y = 0f;
+
+            return offset.magnitude;
         }
 
         private static bool IsDestinationPathClear(Ship ship)
@@ -428,6 +452,7 @@ namespace HexSailingPilot.Navigation
             _state = PilotStateEnum.Inactive;
             _stopReason = StopReasonEnum.None;
             _detourDirection = Vector3.zero;
+            _detourStartPosition = Vector3.zero;
             _destinationClearStreak = 0;
 
             Plugin.Log.LogInfo("Pilot disengaged");
@@ -481,6 +506,7 @@ namespace HexSailingPilot.Navigation
                 _state = PilotStateEnum.Inactive;
                 _stopReason = StopReasonEnum.None;
                 _detourDirection = Vector3.zero;
+                _detourStartPosition = Vector3.zero;
                 return;
             }
 
@@ -491,6 +517,7 @@ namespace HexSailingPilot.Navigation
             _state = PilotStateEnum.Inactive;
             _stopReason = StopReasonEnum.None;
             _detourDirection = Vector3.zero;
+            _detourStartPosition = Vector3.zero;
         }
 
         private static void StartCourse(Ship ship)
@@ -505,6 +532,7 @@ namespace HexSailingPilot.Navigation
             _state = PilotStateEnum.Sailing;
             _stopReason = StopReasonEnum.None;
             _detourDirection = Vector3.zero;
+            _detourStartPosition = Vector3.zero;
             _nextDepthScanTime = 0f;
             _nextDetourRecheckTime = 0f;
 

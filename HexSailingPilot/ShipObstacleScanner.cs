@@ -67,7 +67,7 @@ namespace HexSailingPilot
 
                     LogCandidateHit(i, hit, layerName);
 
-                    if (layerName != "terrain" && layerName != "static_solid")
+                    if (!IsBlockingObstacle(hit.collider, layerName))
                     {
                         continue;
                     }
@@ -85,6 +85,16 @@ namespace HexSailingPilot
                 $"ScanDistance: {scanDistance:F1}m");
 
             return blocked;
+        }
+
+        private static bool IsBlockingObstacle(Collider collider, string layerName)
+        {
+            if (layerName == "terrain" || layerName == "static_solid")
+            {
+                return true;
+            }
+
+            return collider.GetComponentInParent<Leviathan>() != null;
         }
 
         private static float GetScanDistance(Ship ship)

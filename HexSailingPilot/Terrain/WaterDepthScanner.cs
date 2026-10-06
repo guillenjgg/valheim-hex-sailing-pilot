@@ -7,6 +7,7 @@ namespace HexSailingPilot.Terrain
     {
         private const float MinimumNavigableDepth = 1f;
         private const float ScanAngleInterval = 30f;
+        private const float RouteScanInterval = 10f;
 
         private static readonly float[] ScanDistances =
         {
@@ -43,6 +44,52 @@ namespace HexSailingPilot.Terrain
                     depth,
                     isSafe));
             }
+
+            return results;
+        }
+
+        internal static List<WaterDepthScanModel> ScanRoute(Vector3 start, Vector3 destination)
+        {
+            var results = new List<WaterDepthScanModel>();
+            WaterVolume waterVolume = null;
+
+            var direction = destination - start;
+            direction.y = 0f;
+
+            var routeDistance = direction.magnitude;
+
+            if (routeDistance <= 0.001f)
+            {
+                return results;
+            }
+
+            direction.Normalize();
+
+            for (var distance = RouteScanInterval; distance < routeDistance; distance += RouteScanInterval)
+            {
+                var position = start + direction * distance;
+
+                var hasDepth = TryGetDepth(position, ref waterVolume, out var depth);
+                var isSafe = hasDepth && IsNavigableDepth(depth);
+
+                results.Add(new WaterDepthScanModel(
+                    distance,
+                    position,
+                    hasDepth,
+                    depth,
+                    isSafe));
+            }
+
+            var destinationPosition = start + direction * routeDistance;
+            var destinationHasDepth = TryGetDepth(destinationPosition, ref waterVolume, out var destinationDepth);
+            var destinationIsSafe = destinationHasDepth && IsNavigableDepth(destinationDepth);
+
+            results.Add(new WaterDepthScanModel(
+                routeDistance,
+                destinationPosition,
+                destinationHasDepth,
+                destinationDepth,
+                destinationIsSafe));
 
             return results;
         }
