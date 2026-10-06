@@ -12,6 +12,8 @@ namespace HexSailingPilot
         private const float ManualSpeedThreshold = 0.5f;
         private const float DepthScanInterval = 1f;
         private const float DetourRecheckInterval = 1f;
+        private const float MinimumDetourDuration = 3f;
+        private const int RequiredClearConfirmations = 3;
 
         private enum PilotStateEnum
         {
@@ -36,6 +38,8 @@ namespace HexSailingPilot
         private static Vector3 _detourDirection;
         private static float _nextDepthScanTime;
         private static float _nextDetourRecheckTime;
+        private static float _detourStartTime;
+        private static int _destinationClearStreak;
 
         internal static void ApplyControls(Ship ship, Vector3 playerMoveDir, ref Vector3 moveDir)
         {
@@ -193,12 +197,32 @@ namespace HexSailingPilot
             {
                 _nextDetourRecheckTime = Time.time + DetourRecheckInterval;
 
-                if (IsDestinationPathClear(ship))
+                var detourElapsed = Time.time - _detourStartTime;
+                var pathClearNow = IsDestinationPathClear(ship);
+
+                if (pathClearNow)
+                {
+                    _destinationClearStreak++;
+                }
+                else
+                {
+                    _destinationClearStreak = 0;
+                }
+
+                var confirmedClear = detourElapsed >= MinimumDetourDuration &&
+                                      _destinationClearStreak >= RequiredClearConfirmations;
+
+                if (confirmedClear)
                 {
                     _state = PilotStateEnum.Sailing;
                     _detourDirection = Vector3.zero;
+                    _destinationClearStreak = 0;
 
-                    Plugin.Log.LogInfo("Detour complete | Destination path clear");
+                    Plugin.Log.LogInfo(
+                        $"Detour complete | " +
+                        $"Destination path clear | " +
+                        $"Elapsed: {detourElapsed:F1}s | " +
+                        $"ConfirmedStreak: {RequiredClearConfirmations}");
                     return;
                 }
 
@@ -234,6 +258,8 @@ namespace HexSailingPilot
             _detourDirection = detourDirection;
             _state = PilotStateEnum.Detouring;
             _nextDetourRecheckTime = Time.time + DetourRecheckInterval;
+            _detourStartTime = Time.time;
+            _destinationClearStreak = 0;
 
             Plugin.Log.LogInfo(
                 $"Detour started | " +
@@ -403,6 +429,7 @@ namespace HexSailingPilot
             _state = PilotStateEnum.Inactive;
             _stopReason = StopReasonEnum.None;
             _detourDirection = Vector3.zero;
+            _destinationClearStreak = 0;
 
             Plugin.Log.LogInfo("Pilot disengaged");
         }
