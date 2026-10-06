@@ -1,5 +1,5 @@
 ﻿using HarmonyLib;
-using HexSailingPilot;
+using HexSailingPilot.Navigation;
 
 [HarmonyPatch(typeof(ShipControlls), nameof(ShipControlls.OnUseStop))]
 internal static class ShipControllsOnUseStopPatch

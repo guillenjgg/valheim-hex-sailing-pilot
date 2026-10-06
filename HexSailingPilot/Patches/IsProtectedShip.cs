@@ -1,5 +1,5 @@
 ﻿using HarmonyLib;
-using UnityEngine;
+using HexSailingPilot.Navigation;
 
 namespace HexSailingPilot.Patches
 {

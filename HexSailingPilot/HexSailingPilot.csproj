@@ -36,11 +36,11 @@
       <Private>False</Private>
     </Reference>
     <Reference Include="assembly_utils_publicized">
-      <HintPath>..\..\..\publicized_assemblies\v1.0.16\assembly_utils_publicized.dll</HintPath>
+      <HintPath>..\..\..\publicized_assemblies\v1.0.17\assembly_utils_publicized.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="assembly_valheim_publicized">
-      <HintPath>..\..\..\publicized_assemblies\v1.0.16\assembly_valheim_publicized.dll</HintPath>
+      <HintPath>..\..\..\publicized_assemblies\v1.0.17\assembly_valheim_publicized.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="BepInEx">
@@ -79,6 +79,7 @@
   <ItemGroup>
     <Compile Include="HexSailingPilot\Navigation\DetourDirectionSelector.cs" />
     <Compile Include="HexSailingPilot\Navigation\MapDestinationService.cs" />
+    <Compile Include="HexSailingPilot\Navigation\SailingPropulsionController.cs" />
     <Compile Include="HexSailingPilot\Navigation\ShallowWaterEscapeDirectionEnum.cs" />
     <Compile Include="HexSailingPilot\Navigation\ShallowWaterEscapeDirectionSelector.cs" />
     <Compile Include="HexSailingPilot\Navigation\SteeringCalculator.cs" />
@@ -91,7 +92,7 @@
     <Compile Include="Patches\ShipControllsPatch.cs" />
     <Compile Include="Plugin.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="SailingPilotController.cs" />
+    <Compile Include="HexSailingPilot\Navigation\SailingPilotController.cs" />
     <Compile Include="ShipObstacleScanner.cs" />
     <Compile Include="ShipObstacleScanResult.cs" />
     <Compile Include="Terrain\WaterDepthScanModel.cs" />

@@ -1,9 +1,8 @@
-﻿using HexSailingPilot.Navigation;
-using HexSailingPilot.ShipAccess;
+﻿using HexSailingPilot.ShipAccess;
 using HexSailingPilot.Terrain;
 using UnityEngine;
 
-namespace HexSailingPilot
+namespace HexSailingPilot.Navigation
 {
     internal static class SailingPilotController
     {
@@ -332,7 +331,7 @@ namespace HexSailingPilot
                 return;
             }
 
-            moveDir.z = 1f;
+            SailingPropulsionController.Apply(ship, ref moveDir);
 
             var targetHeading = SteeringCalculator.GetHeading(direction);
             var currentHeading = SteeringCalculator.GetHeading(ship.transform.forward);
@@ -445,13 +444,12 @@ namespace HexSailingPilot
         {
             SteeringCalculator.SetRudderInput(0f, rudderValue, ref moveDir);
 
+            SailingPropulsionController.Stop(ship, ref moveDir);
+
             if (ShipAccessor.ShipSpeed(ship) != Ship.Speed.Stop)
             {
-                moveDir.z = -1f;
                 return;
             }
-
-            moveDir.z = 0f;
 
             var body = ShipAccessor.ShipBody(ship);
 
