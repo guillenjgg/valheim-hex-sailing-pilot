@@ -11,11 +11,13 @@ namespace HexSailingPilot
         private const float ManualSteeringThreshold = 0.5f;
         private const float ManualSpeedThreshold = 0.5f;
         private const float DepthScanInterval = 1f;
+        private const float DetourRecheckInterval = 1f;
 
         private enum PilotStateEnum
         {
             Inactive,
             Sailing,
+            Detouring,
             Stopping
         }
 
@@ -31,7 +33,9 @@ namespace HexSailingPilot
         private static StopReasonEnum _stopReason = StopReasonEnum.None;
         private static Ship _controlledShip;
         private static SailingCourseModel _course;
+        private static Vector3 _detourDirection;
         private static float _nextDepthScanTime;
+        private static float _nextDetourRecheckTime;
 
         internal static void ApplyControls(Ship ship, Vector3 playerMoveDir, ref Vector3 moveDir)
         {
@@ -67,32 +71,6 @@ namespace HexSailingPilot
                 return;
             }
 
-            var unsafeWaterDetected = ScanDepth(ship);
-
-            var directionToDestination = _course.Destination - ship.transform.position;
-            directionToDestination.y = 0f;
-
-            var obstacleDetected = ShipObstacleScanner.IsDirectionBlocked(
-                ship,
-                directionToDestination,
-                out var obstacleDistance);
-
-            if (unsafeWaterDetected || obstacleDetected)
-            {
-                _state = PilotStateEnum.Stopping;
-                _stopReason = StopReasonEnum.PathBlocked;
-
-                Plugin.Log.LogInfo(
-                    $"Pilot destination path blocked | " +
-                    $"Water: {unsafeWaterDetected} | " +
-                    $"Obstacle: {obstacleDetected} | " +
-                    $"ObstacleDistance: {obstacleDistance:F1}m | " +
-                    $"ShipSpeed: {ShipAccessor.ShipSpeed(ship)}");
-
-                ApplyStop(ship, rudderValue, ref moveDir);
-                return;
-            }
-
             var distanceToDestination = SteeringCalculator.GetDistanceToDestination(_course, ship.transform.position);
 
             if (distanceToDestination <= ArrivalDistance)
@@ -109,29 +87,55 @@ namespace HexSailingPilot
                 return;
             }
 
-            moveDir.z = 1f;
+            if (_state == PilotStateEnum.Detouring)
+            {
+                ApplyDetour(ship, rudderValue, ref moveDir);
+                return;
+            }
+
+            var unsafeWaterDetected = ScanDepth(ship);
+
+            var directionToDestination = _course.Destination - ship.transform.position;
+            directionToDestination.y = 0f;
+
+            var obstacleDetected = ShipObstacleScanner.IsDirectionBlocked(
+                ship,
+                directionToDestination,
+                out var obstacleDistance);
+
+            if (unsafeWaterDetected || obstacleDetected)
+            {
+                if (TryStartDetour(ship))
+                {
+                    ApplySteering(ship, _detourDirection, rudderValue, ref moveDir);
+                    return;
+                }
+
+                _state = PilotStateEnum.Stopping;
+                _stopReason = StopReasonEnum.PathBlocked;
+
+                Plugin.Log.LogInfo(
+                    $"Pilot destination path blocked | " +
+                    $"Water: {unsafeWaterDetected} | " +
+                    $"Obstacle: {obstacleDetected} | " +
+                    $"ObstacleDistance: {obstacleDistance:F1}m | " +
+                    $"No detour available");
+
+                ApplyStop(ship, rudderValue, ref moveDir);
+                return;
+            }
 
             var lookAheadPoint = SteeringCalculator.GetLookAheadPoint(_course, ship.transform.position);
             var directionToTarget = lookAheadPoint - ship.transform.position;
             directionToTarget.y = 0f;
 
-            if (directionToTarget.sqrMagnitude <= 0.001f)
-            {
-                moveDir.x = 0f;
-                return;
-            }
-
-            var targetHeading = SteeringCalculator.GetHeading(directionToTarget);
-            var currentHeading = SteeringCalculator.GetHeading(ship.transform.forward);
-            var headingError = Mathf.DeltaAngle(currentHeading, targetHeading);
-            var targetRudder = SteeringCalculator.GetTargetRudder(headingError);
-
-            SteeringCalculator.SetRudderInput(targetRudder, rudderValue, ref moveDir);
+            ApplySteering(ship, directionToTarget, rudderValue, ref moveDir);
         }
 
         internal static bool IsActive()
         {
             return _state == PilotStateEnum.Sailing ||
+                   _state == PilotStateEnum.Detouring ||
                    _state == PilotStateEnum.Stopping;
         }
 
@@ -181,6 +185,135 @@ namespace HexSailingPilot
             return IsActive() &&
                    ship != null &&
                    ship == _controlledShip;
+        }
+
+        private static void ApplyDetour(Ship ship, float rudderValue, ref Vector3 moveDir)
+        {
+            if (Time.time >= _nextDetourRecheckTime)
+            {
+                _nextDetourRecheckTime = Time.time + DetourRecheckInterval;
+
+                if (IsDestinationPathClear(ship))
+                {
+                    _state = PilotStateEnum.Sailing;
+                    _detourDirection = Vector3.zero;
+
+                    Plugin.Log.LogInfo("Detour complete | Destination path clear");
+                    return;
+                }
+
+                if (!IsDirectionSafe(ship, _detourDirection))
+                {
+                    if (!TryStartDetour(ship))
+                    {
+                        _state = PilotStateEnum.Stopping;
+                        _stopReason = StopReasonEnum.PathBlocked;
+
+                        Plugin.Log.LogInfo("Detour blocked | No alternate safe direction");
+
+                        ApplyStop(ship, rudderValue, ref moveDir);
+                        return;
+                    }
+                }
+            }
+
+            ApplySteering(ship, _detourDirection, rudderValue, ref moveDir);
+        }
+
+        private static bool TryStartDetour(Ship ship)
+        {
+            if (!DetourDirectionSelector.TrySelect(
+                ship,
+                _course.Destination,
+                out var detourDirection,
+                out var detourAngle))
+            {
+                return false;
+            }
+
+            _detourDirection = detourDirection;
+            _state = PilotStateEnum.Detouring;
+            _nextDetourRecheckTime = Time.time + DetourRecheckInterval;
+
+            Plugin.Log.LogInfo(
+                $"Detour started | " +
+                $"Angle: {detourAngle:F0}° | " +
+                $"Heading: {SteeringCalculator.GetHeading(_detourDirection):F1}°");
+
+            return true;
+        }
+
+        private static bool IsDestinationPathClear(Ship ship)
+        {
+            var directionToDestination = _course.Destination - ship.transform.position;
+            directionToDestination.y = 0f;
+
+            if (directionToDestination.sqrMagnitude <= 0.001f)
+            {
+                return true;
+            }
+
+            if (ShipObstacleScanner.IsDirectionBlocked(ship, directionToDestination, out _))
+            {
+                return false;
+            }
+
+            return IsDepthPathSafe(ship, directionToDestination);
+        }
+
+        private static bool IsDirectionSafe(Ship ship, Vector3 direction)
+        {
+            if (direction.sqrMagnitude <= 0.001f)
+            {
+                return false;
+            }
+
+            if (ShipObstacleScanner.IsDirectionBlocked(ship, direction, out _))
+            {
+                return false;
+            }
+
+            return IsDepthPathSafe(ship, direction);
+        }
+
+        private static bool IsDepthPathSafe(Ship ship, Vector3 direction)
+        {
+            var results = WaterDepthScanner.ScanDirection(ship, direction);
+
+            if (results == null || results.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (var result in results)
+            {
+                if (!result.HasDepth || !result.IsSafe)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void ApplySteering(Ship ship, Vector3 direction, float rudderValue, ref Vector3 moveDir)
+        {
+            direction.y = 0f;
+
+            if (direction.sqrMagnitude <= 0.001f)
+            {
+                moveDir.x = 0f;
+                return;
+            }
+
+            moveDir.z = 1f;
+
+            var targetHeading = SteeringCalculator.GetHeading(direction);
+            var currentHeading = SteeringCalculator.GetHeading(ship.transform.forward);
+            var headingError = Mathf.DeltaAngle(currentHeading, targetHeading);
+            var targetRudder = SteeringCalculator.GetTargetRudder(headingError);
+
+            SteeringCalculator.SetRudderInput(targetRudder, rudderValue, ref moveDir);
         }
 
         private static bool ScanDepth(Ship ship)
@@ -269,6 +402,7 @@ namespace HexSailingPilot
             _lastShip = null;
             _state = PilotStateEnum.Inactive;
             _stopReason = StopReasonEnum.None;
+            _detourDirection = Vector3.zero;
 
             Plugin.Log.LogInfo("Pilot disengaged");
         }
@@ -315,12 +449,13 @@ namespace HexSailingPilot
 
             if (_stopReason == StopReasonEnum.PathBlocked)
             {
-                Plugin.Log.LogInfo("Pilot stopped | Destination path blocked");
+                Plugin.Log.LogInfo("Pilot stopped | No safe detour available");
 
                 ClearCourse();
                 _lastShip = null;
                 _state = PilotStateEnum.Inactive;
                 _stopReason = StopReasonEnum.None;
+                _detourDirection = Vector3.zero;
                 return;
             }
 
@@ -330,6 +465,7 @@ namespace HexSailingPilot
             _lastShip = null;
             _state = PilotStateEnum.Inactive;
             _stopReason = StopReasonEnum.None;
+            _detourDirection = Vector3.zero;
         }
 
         private static void StartCourse(Ship ship)
@@ -343,7 +479,9 @@ namespace HexSailingPilot
             _lastShip = ship;
             _state = PilotStateEnum.Sailing;
             _stopReason = StopReasonEnum.None;
+            _detourDirection = Vector3.zero;
             _nextDepthScanTime = 0f;
+            _nextDetourRecheckTime = 0f;
 
             _course = new SailingCourseModel(
                 ship.transform.position,

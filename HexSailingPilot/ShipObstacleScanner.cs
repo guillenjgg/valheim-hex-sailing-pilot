@@ -1,15 +1,19 @@
-﻿using UnityEngine;
+﻿using HexSailingPilot.ShipAccess;
+using UnityEngine;
 
 namespace HexSailingPilot
 {
     internal static class ShipObstacleScanner
     {
-        private const float ScanDistance = 15f;
+        private const float MinimumScanDistance = 25f;
+        private const float MaximumScanDistance = 50f;
+        private const float ScanDistancePerSpeed = 10f;
         private const float RayHeight = 0.5f;
 
         internal static bool IsDirectionBlocked(Ship ship, Vector3 direction, out float nearestDistance)
         {
-            nearestDistance = ScanDistance;
+            var scanDistance = GetScanDistance(ship);
+            nearestDistance = scanDistance;
 
             if (ship == null)
             {
@@ -29,16 +33,8 @@ namespace HexSailingPilot
             var center = bounds.center;
             center.y = bounds.min.y + RayHeight;
 
-            var directionLocal = ship.transform.InverseTransformDirection(direction);
-            var forwardBackward = Mathf.Abs(directionLocal.z) > Mathf.Abs(directionLocal.x);
-
-            var perpendicular = forwardBackward
-                ? ship.transform.right
-                : ship.transform.forward;
-
-            var halfWidth = forwardBackward
-                ? bounds.extents.x
-                : bounds.extents.z;
+            var perpendicular = Vector3.Cross(Vector3.up, direction).normalized;
+            var halfWidth = Mathf.Max(bounds.extents.x, bounds.extents.z);
 
             var blocked = false;
 
@@ -49,7 +45,7 @@ namespace HexSailingPilot
                 var hits = Physics.RaycastAll(
                     origin,
                     direction,
-                    ScanDistance,
+                    scanDistance,
                     Physics.DefaultRaycastLayers,
                     QueryTriggerInteraction.Ignore);
 
@@ -85,9 +81,33 @@ namespace HexSailingPilot
             Plugin.Log.LogInfo(
                 $"Destination obstacle scan | " +
                 $"{(blocked ? "BLOCKED" : "CLEAR")} | " +
-                $"Distance: {nearestDistance:F1}m");
+                $"Distance: {nearestDistance:F1}m | " +
+                $"ScanDistance: {scanDistance:F1}m");
 
             return blocked;
+        }
+
+        private static float GetScanDistance(Ship ship)
+        {
+            if (ship == null)
+            {
+                return MinimumScanDistance;
+            }
+
+            var body = ShipAccessor.ShipBody(ship);
+
+            if (body == null)
+            {
+                return MinimumScanDistance;
+            }
+
+            var horizontalVelocity = new Vector3(body.linearVelocity.x, 0f, body.linearVelocity.z);
+            var speed = horizontalVelocity.magnitude;
+
+            return Mathf.Clamp(
+                MinimumScanDistance + speed * ScanDistancePerSpeed,
+                MinimumScanDistance,
+                MaximumScanDistance);
         }
 
         private static void LogCandidateHit(int rayIndex, RaycastHit hit, string layerName)
