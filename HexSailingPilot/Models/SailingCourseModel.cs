@@ -1,6 +1,6 @@
 ﻿using UnityEngine;
 
-namespace HexSailingPilot.Navigation
+namespace HexSailingPilot.Models
 {
     internal sealed class SailingCourseModel
     {

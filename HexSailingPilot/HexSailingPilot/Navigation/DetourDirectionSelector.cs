@@ -1,4 +1,5 @@
-﻿using HexSailingPilot.Terrain;
+﻿using HexSailingPilot.Models;
+using HexSailingPilot.Terrain;
 using UnityEngine;
 
 namespace HexSailingPilot.Navigation

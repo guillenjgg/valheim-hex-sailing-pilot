@@ -1,6 +1,6 @@
 ﻿using UnityEngine;
 
-namespace HexSailingPilot.Terrain
+namespace HexSailingPilot.Models
 {
     internal sealed class WaterDepthScanModel
     {

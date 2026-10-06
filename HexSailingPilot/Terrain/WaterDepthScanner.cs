@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using HexSailingPilot.Models;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace HexSailingPilot.Terrain

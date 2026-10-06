@@ -1,3 +1,4 @@
+using HexSailingPilot.Models;
 using UnityEngine;
 
 namespace HexSailingPilot.Navigation

@@ -1,4 +1,5 @@
-﻿using HexSailingPilot.ShipAccess;
+﻿using HexSailingPilot.Models;
+using HexSailingPilot.ShipAccess;
 using HexSailingPilot.Terrain;
 using UnityEngine;
 
@@ -540,12 +541,47 @@ namespace HexSailingPilot.Navigation
                 ship.transform.position,
                 MapDestinationService.Destination.Value);
 
+            var routeScan = WaterDepthScanner.ScanRoute(
+                _course.Origin,
+                _course.Destination);
+
+            WaterDepthScanModel firstUnsafePoint = null;
+
+            foreach (var result in routeScan)
+            {
+                if (!result.HasDepth || !result.IsSafe)
+                {
+                    firstUnsafePoint = result;
+                    break;
+                }
+            }
+
             Plugin.Log.LogInfo(
                 $"Pilot course started | " +
                 $"Origin: {_course.Origin} | " +
                 $"Destination: {_course.Destination} | " +
                 $"Distance: {_course.Length:F0}m | " +
                 $"Heading: {SteeringCalculator.GetHeading(_course.Direction):F1}°");
+
+            if (firstUnsafePoint == null)
+            {
+                Plugin.Log.LogInfo(
+                    $"Route scan | " +
+                    $"CLEAR | " +
+                    $"Distance: {_course.Length:F0}m | " +
+                    $"Samples: {routeScan.Count}");
+
+                return;
+            }
+
+            Plugin.Log.LogInfo(
+                $"Route scan | " +
+                $"BLOCKED | " +
+                $"RouteDistance: {_course.Length:F0}m | " +
+                $"FirstUnsafeDistance: {firstUnsafePoint.Distance:F0}m | " +
+                $"Depth: {firstUnsafePoint.Depth:F1}m | " +
+                $"HasDepth: {firstUnsafePoint.HasDepth} | " +
+                $"Position: {firstUnsafePoint.Position}");
         }
 
         private static void ClearCourse()

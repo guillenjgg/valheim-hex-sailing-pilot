@@ -4,9 +4,6 @@ using UnityEngine;
 
 namespace HexSailingPilot.ShipAccess
 {
-    // IMPORTANT: These members are not actually public on the real Ship assembly.
-    // We are compiling against a publicized assembly, so Harmony AccessTools
-    // reflection must be used instead of direct member access.
     internal static class ShipAccessor
     {
         internal static readonly AccessTools.FieldRef<Ship, float> RudderValue = AccessTools.FieldRefAccess<Ship, float>("m_rudderValue");

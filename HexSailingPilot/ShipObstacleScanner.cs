@@ -74,6 +74,9 @@ namespace HexSailingPilot
 
                     blocked = true;
                     nearestDistance = Mathf.Min(nearestDistance, hit.distance);
+
+                    LogObstacleBounds(hit.collider);
+
                     break;
                 }
             }
@@ -95,6 +98,61 @@ namespace HexSailingPilot
             }
 
             return collider.GetComponentInParent<Leviathan>() != null;
+        }
+
+        private static void LogObstacleBounds(Collider collider)
+        {
+            var leviathan = collider.GetComponentInParent<Leviathan>();
+
+            if (leviathan == null)
+            {
+                return;
+            }
+
+            if (!TryGetLeviathanBounds(leviathan, out var bounds))
+            {
+                return;
+            }
+
+            Plugin.Log.LogInfo(
+                $"Leviathan bounds | " +
+                $"Center: ({bounds.center.x:F1}, {bounds.center.y:F1}, {bounds.center.z:F1}) | " +
+                $"Size: ({bounds.size.x:F1}, {bounds.size.y:F1}, {bounds.size.z:F1}) | " +
+                $"Min: ({bounds.min.x:F1}, {bounds.min.y:F1}, {bounds.min.z:F1}) | " +
+                $"Max: ({bounds.max.x:F1}, {bounds.max.y:F1}, {bounds.max.z:F1})");
+        }
+
+        private static bool TryGetLeviathanBounds(Leviathan leviathan, out Bounds bounds)
+        {
+            bounds = new Bounds();
+
+            if (leviathan == null)
+            {
+                return false;
+            }
+
+            var colliders = leviathan.GetComponentsInChildren<Collider>();
+            var initialized = false;
+
+            foreach (var collider in colliders)
+            {
+                if (!collider.enabled || collider.isTrigger)
+                {
+                    continue;
+                }
+
+                if (!initialized)
+                {
+                    bounds = collider.bounds;
+                    initialized = true;
+                }
+                else
+                {
+                    bounds.Encapsulate(collider.bounds);
+                }
+            }
+
+            return initialized;
         }
 
         private static float GetScanDistance(Ship ship)

@@ -1,4 +1,4 @@
-﻿using HexSailingPilot.Terrain;
+﻿using HexSailingPilot.Models;
 using System.Collections.Generic;
 
 namespace HexSailingPilot.Navigation
