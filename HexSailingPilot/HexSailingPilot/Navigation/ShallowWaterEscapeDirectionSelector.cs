@@ -5,45 +5,36 @@ namespace HexSailingPilot.Navigation
 {
     internal static class ShallowWaterEscapeDirectionSelector
     {
-        internal static ShallowWaterEscapeDirectionEnum Select(
-            List<WaterDepthScanModel> forwardResults,
-            List<WaterDepthScanModel> backwardResults,
-            List<WaterDepthScanModel> leftResults,
-            List<WaterDepthScanModel> rightResults)
+        internal static bool TrySelect(
+            Dictionary<float, List<WaterDepthScanModel>> scanResults,
+            out float bestAngle,
+            out float bestScore)
         {
-            var bestDirection = ShallowWaterEscapeDirectionEnum.None;
-            var bestScore = float.NegativeInfinity;
+            bestAngle = 0f;
+            bestScore = float.NegativeInfinity;
+            var found = false;
 
-            EvaluateDirection(
-                ShallowWaterEscapeDirectionEnum.Forward,
-                forwardResults,
-                ref bestDirection,
-                ref bestScore);
+            foreach (var scan in scanResults)
+            {
+                if (!TryGetScore(scan.Value, out var score))
+                {
+                    continue;
+                }
 
-            EvaluateDirection(
-                ShallowWaterEscapeDirectionEnum.Backward,
-                backwardResults,
-                ref bestDirection,
-                ref bestScore);
+                if (score <= bestScore)
+                {
+                    continue;
+                }
 
-            EvaluateDirection(
-                ShallowWaterEscapeDirectionEnum.Left,
-                leftResults,
-                ref bestDirection,
-                ref bestScore);
+                bestAngle = scan.Key;
+                bestScore = score;
+                found = true;
+            }
 
-            EvaluateDirection(
-                ShallowWaterEscapeDirectionEnum.Right,
-                rightResults,
-                ref bestDirection,
-                ref bestScore);
-
-            return bestDirection;
+            return found;
         }
 
-        internal static bool TryGetScore(
-            List<WaterDepthScanModel> results,
-            out float score)
+        internal static bool TryGetScore(List<WaterDepthScanModel> results, out float score)
         {
             score = 0f;
 
@@ -62,26 +53,6 @@ namespace HexSailingPilot.Navigation
 
             score = results[results.Count - 1].Depth - results[0].Depth;
             return true;
-        }
-
-        private static void EvaluateDirection(
-            ShallowWaterEscapeDirectionEnum direction,
-            List<WaterDepthScanModel> results,
-            ref ShallowWaterEscapeDirectionEnum bestDirection,
-            ref float bestScore)
-        {
-            if (!TryGetScore(results, out float score))
-            {
-                return;
-            }
-
-            if (score <= bestScore)
-            {
-                return;
-            }
-
-            bestDirection = direction;
-            bestScore = score;
         }
     }
 }

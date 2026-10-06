@@ -9,16 +9,16 @@ namespace HexSailingPilot.Navigation
         internal Vector3 Destination { get; }
         internal float Length { get; }
 
-        internal SailingCourseModel(Vector3 origin, Vector3 direction, float length)
+        internal SailingCourseModel(Vector3 origin, Vector3 destination)
         {
             Origin = origin;
+            Destination = destination;
 
+            var direction = Destination - Origin;
             direction.y = 0f;
-            direction.Normalize();
 
-            Direction = direction;
-            Length = length;
-            Destination = Origin + Direction * Length;
+            Length = direction.magnitude;
+            Direction = direction.normalized;
         }
     }
 }

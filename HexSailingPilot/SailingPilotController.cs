@@ -1,14 +1,12 @@
 ﻿using HexSailingPilot.Navigation;
 using HexSailingPilot.ShipAccess;
 using HexSailingPilot.Terrain;
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace HexSailingPilot
 {
     internal static class SailingPilotController
     {
-        private const float TestDestinationDistance = 150f;
         private const float ArrivalDistance = 10f;
         private const float ManualSteeringThreshold = 0.5f;
         private const float ManualSpeedThreshold = 0.5f;
@@ -18,15 +16,14 @@ namespace HexSailingPilot
         {
             Inactive,
             Sailing,
-            Stopping,
-            AvoidingShallowWater
+            Stopping
         }
 
         private enum StopReasonEnum
         {
             None,
             Arrival,
-            ShallowWater
+            PathBlocked
         }
 
         private static Ship _lastShip;
@@ -70,22 +67,26 @@ namespace HexSailingPilot
                 return;
             }
 
-            if (_state == PilotStateEnum.AvoidingShallowWater)
-            {
-                moveDir.x = 0f;
-                moveDir.z = 0f;
-                return;
-            }
+            var unsafeWaterDetected = ScanDepth(ship);
 
-            bool unsafeWaterDetected = ScanDepth(ship);
+            var directionToDestination = _course.Destination - ship.transform.position;
+            directionToDestination.y = 0f;
 
-            if (unsafeWaterDetected)
+            var obstacleDetected = ShipObstacleScanner.IsDirectionBlocked(
+                ship,
+                directionToDestination,
+                out var obstacleDistance);
+
+            if (unsafeWaterDetected || obstacleDetected)
             {
                 _state = PilotStateEnum.Stopping;
-                _stopReason = StopReasonEnum.ShallowWater;
+                _stopReason = StopReasonEnum.PathBlocked;
 
                 Plugin.Log.LogInfo(
-                    $"Pilot shallow water detected | " +
+                    $"Pilot destination path blocked | " +
+                    $"Water: {unsafeWaterDetected} | " +
+                    $"Obstacle: {obstacleDetected} | " +
+                    $"ObstacleDistance: {obstacleDistance:F1}m | " +
                     $"ShipSpeed: {ShipAccessor.ShipSpeed(ship)}");
 
                 ApplyStop(ship, rudderValue, ref moveDir);
@@ -126,26 +127,12 @@ namespace HexSailingPilot
             var targetRudder = SteeringCalculator.GetTargetRudder(headingError);
 
             SteeringCalculator.SetRudderInput(targetRudder, rudderValue, ref moveDir);
-
-            var crossTrackError = SteeringCalculator.GetCrossTrackError(_course, ship.transform.position);
-
-            Plugin.Log.LogInfo(
-                $"Pilot course | " +
-                $"Distance: {distanceToDestination:F1}m | " +
-                $"Target: {targetHeading:F1}° | " +
-                $"Current: {currentHeading:F1}° | " +
-                $"Error: {headingError:+0.0;-0.0;0.0}° | " +
-                $"CrossTrack: {crossTrackError:+0.0;-0.0;0.0}m | " +
-                $"TargetRudder: {targetRudder:+0.00;-0.00;0.00} | " +
-                $"Rudder: {rudderValue:+0.00;-0.00;0.00} | " +
-                $"Input: {moveDir.x:+0.0;-0.0;0.0}");
         }
 
         internal static bool IsActive()
         {
             return _state == PilotStateEnum.Sailing ||
-                   _state == PilotStateEnum.Stopping ||
-                   _state == PilotStateEnum.AvoidingShallowWater;
+                   _state == PilotStateEnum.Stopping;
         }
 
         internal static void Toggle(Ship ship)
@@ -205,99 +192,31 @@ namespace HexSailingPilot
 
             _nextDepthScanTime = Time.time + DepthScanInterval;
 
-            if (WaterDepthScanner.TryGetDepthUnderShip(ship, out float currentDepth))
+            var directionToDestination = _course.Destination - ship.transform.position;
+            directionToDestination.y = 0f;
+
+            if (directionToDestination.sqrMagnitude <= 0.001f)
             {
-                Plugin.Log.LogInfo(
-                    $"Depth scan | " +
-                    $"Direction: Current | " +
-                    $"Distance: 0m | " +
-                    $"Depth: {currentDepth:F1}m");
-            }
-            else
-            {
-                Plugin.Log.LogInfo(
-                    $"Depth scan | " +
-                    $"Direction: Current | " +
-                    $"Distance: 0m | " +
-                    $"No depth data");
+                return false;
             }
 
-            var forwardResults = WaterDepthScanner.ScanForward(ship);
-            var backwardResults = WaterDepthScanner.ScanBackward(ship);
-            var leftResults = WaterDepthScanner.ScanLeft(ship);
-            var rightResults = WaterDepthScanner.ScanRight(ship);
+            var results = WaterDepthScanner.ScanDirection(ship, directionToDestination);
 
-            LogDepthScan("Forward", forwardResults);
-            LogDepthScan("Backward", backwardResults);
-            LogDepthScan("Left", leftResults);
-            LogDepthScan("Right", rightResults);
-
-            LogEscapeDirection("Forward", forwardResults);
-            LogEscapeDirection("Backward", backwardResults);
-            LogEscapeDirection("Left", leftResults);
-            LogEscapeDirection("Right", rightResults);
-
-            var escapeDirection = ShallowWaterEscapeDirectionSelector.Select(
-                forwardResults,
-                backwardResults,
-                leftResults,
-                rightResults);
-
-            Plugin.Log.LogInfo(
-                $"Avoidance decision | " +
-                $"Direction: {escapeDirection}");
-
-            foreach (var result in forwardResults)
-            {
-                if (result.HasDepth && !result.IsSafe)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static void LogDepthScan(string direction, List<WaterDepthScanModel> results)
-        {
             foreach (var result in results)
             {
                 if (result.HasDepth)
                 {
                     Plugin.Log.LogInfo(
-                        $"Depth scan | " +
-                        $"Direction: {direction} | " +
+                        $"Destination depth scan | " +
                         $"Distance: {result.Distance:F0}m | " +
                         $"Depth: {result.Depth:F1}m | " +
                         $"Safe: {result.IsSafe}");
                 }
-                else
-                {
-                    Plugin.Log.LogInfo(
-                        $"Depth scan | " +
-                        $"Direction: {direction} | " +
-                        $"Distance: {result.Distance:F0}m | " +
-                        $"No depth data");
-                }
-            }
-        }
-
-        private static void LogEscapeDirection(string direction, List<WaterDepthScanModel> results)
-        {
-            if (!ShallowWaterEscapeDirectionSelector.TryGetScore(results, out float score))
-            {
-                Plugin.Log.LogInfo(
-                    $"Avoidance direction | " +
-                    $"Direction: {direction} | " +
-                    $"Unsafe");
-
-                return;
             }
 
-            Plugin.Log.LogInfo(
-                $"Avoidance direction | " +
-                $"Direction: {direction} | " +
-                $"Score: {score:+0.0;-0.0;0.0}");
+            var nearestResult = results[0];
+
+            return nearestResult.HasDepth && !nearestResult.IsSafe;
         }
 
         private static void StopShip(Ship ship)
@@ -314,11 +233,6 @@ namespace HexSailingPilot
             }
 
             ShipAccessor.StopMethod.Invoke(ship, null);
-
-            Plugin.Log.LogInfo(
-                $"Ship stop requested | " +
-                $"ShipSpeed: {ShipAccessor.ShipSpeed(ship)} | " +
-                $"Rudder: {ShipAccessor.RudderValue(ship):+0.00;-0.00;0.00}");
         }
 
         private static void BrakeShip(Ship ship)
@@ -343,9 +257,7 @@ namespace HexSailingPilot
 
             Plugin.Log.LogInfo(
                 $"Pilot manual takeover | " +
-                $"PlayerInput: ({playerMoveDir.x:+0.00;-0.00;0.00}, {playerMoveDir.z:+0.00;-0.00;0.00}) | " +
-                $"ShipSpeed: {ShipAccessor.ShipSpeed(ship)} | " +
-                $"Rudder: {ShipAccessor.RudderValue(ship):+0.00;-0.00;0.00}");
+                $"PlayerInput: ({playerMoveDir.x:+0.00;-0.00;0.00}, {playerMoveDir.z:+0.00;-0.00;0.00})");
 
             Disengage();
         }
@@ -375,49 +287,44 @@ namespace HexSailingPilot
             if (ShipAccessor.ShipSpeed(ship) != Ship.Speed.Stop)
             {
                 moveDir.z = -1f;
-
-                Plugin.Log.LogInfo(
-                    $"Pilot stopping | " +
-                    $"Distance: {SteeringCalculator.GetDistanceToDestination(_course, ship.transform.position):F1}m | " +
-                    $"ShipSpeed: {ShipAccessor.ShipSpeed(ship)} | " +
-                    $"Rudder: {rudderValue:+0.00;-0.00;0.00}");
-
                 return;
             }
 
             moveDir.z = 0f;
 
+            var body = ShipAccessor.ShipBody(ship);
+
+            if (body != null)
+            {
+                var horizontalVelocity = new Vector3(body.linearVelocity.x, 0f, body.linearVelocity.z);
+                var horizontalSpeed = horizontalVelocity.magnitude;
+
+                if (horizontalSpeed > 0.1f)
+                {
+                    BrakeShip(ship);
+                    return;
+                }
+            }
+
             if (Mathf.Abs(rudderValue) > SteeringCalculator.RudderTolerance)
             {
-                Plugin.Log.LogInfo(
-                    $"Pilot centering rudder | " +
-                    $"Distance: {SteeringCalculator.GetDistanceToDestination(_course, ship.transform.position):F1}m | " +
-                    $"Rudder: {rudderValue:+0.00;-0.00;0.00} | " +
-                    $"Input: {moveDir.x:+0.0;-0.0;0.0}");
-
                 return;
             }
 
             moveDir.x = 0f;
 
-            if (_stopReason == StopReasonEnum.ShallowWater)
+            if (_stopReason == StopReasonEnum.PathBlocked)
             {
-                _state = PilotStateEnum.AvoidingShallowWater;
+                Plugin.Log.LogInfo("Pilot stopped | Destination path blocked");
+
+                ClearCourse();
+                _lastShip = null;
+                _state = PilotStateEnum.Inactive;
                 _stopReason = StopReasonEnum.None;
-
-                Plugin.Log.LogInfo(
-                    $"Pilot stopped for shallow water | " +
-                    $"Distance: {SteeringCalculator.GetDistanceToDestination(_course, ship.transform.position):F1}m | " +
-                    $"ShipSpeed: {ShipAccessor.ShipSpeed(ship)}");
-
                 return;
             }
 
-            Plugin.Log.LogInfo(
-                $"Pilot complete | " +
-                $"Distance: {SteeringCalculator.GetDistanceToDestination(_course, ship.transform.position):F1}m | " +
-                $"ShipSpeed: {ShipAccessor.ShipSpeed(ship)} | " +
-                $"Rudder: {rudderValue:+0.00;-0.00;0.00}");
+            Plugin.Log.LogInfo("Pilot complete");
 
             ClearCourse();
             _lastShip = null;
@@ -427,6 +334,12 @@ namespace HexSailingPilot
 
         private static void StartCourse(Ship ship)
         {
+            if (!MapDestinationService.Destination.HasValue)
+            {
+                Plugin.Log.LogInfo("Pilot cannot start | No map destination selected");
+                return;
+            }
+
             _lastShip = ship;
             _state = PilotStateEnum.Sailing;
             _stopReason = StopReasonEnum.None;
@@ -434,8 +347,7 @@ namespace HexSailingPilot
 
             _course = new SailingCourseModel(
                 ship.transform.position,
-                ship.transform.forward,
-                TestDestinationDistance);
+                MapDestinationService.Destination.Value);
 
             Plugin.Log.LogInfo(
                 $"Pilot course started | " +

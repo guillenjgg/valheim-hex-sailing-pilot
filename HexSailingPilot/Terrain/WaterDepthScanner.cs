@@ -6,7 +6,7 @@ namespace HexSailingPilot.Terrain
     internal static class WaterDepthScanner
     {
         private const float MinimumNavigableDepth = 1f;
-        private const float PreferredDepth = 5f;
+        private const float ScanAngleInterval = 30f;
 
         private static readonly float[] ScanDistances =
         {
@@ -15,24 +15,49 @@ namespace HexSailingPilot.Terrain
             50f
         };
 
-        internal static List<WaterDepthScanModel> ScanForward(Ship ship)
+        internal static List<WaterDepthScanModel> ScanDirection(Ship ship, Vector3 direction)
         {
-            return ScanDirection(ship, ship.transform.forward);
+            var results = new List<WaterDepthScanModel>(ScanDistances.Length);
+            WaterVolume waterVolume = null;
+
+            direction.y = 0f;
+
+            if (direction.sqrMagnitude <= 0.001f)
+            {
+                return results;
+            }
+
+            direction.Normalize();
+
+            foreach (var distance in ScanDistances)
+            {
+                var position = ship.transform.position + direction * distance;
+
+                var hasDepth = TryGetDepth(position, ref waterVolume, out var depth);
+                var isSafe = hasDepth && IsNavigableDepth(depth);
+
+                results.Add(new WaterDepthScanModel(
+                    distance,
+                    position,
+                    hasDepth,
+                    depth,
+                    isSafe));
+            }
+
+            return results;
         }
 
-        internal static List<WaterDepthScanModel> ScanBackward(Ship ship)
+        internal static Dictionary<float, List<WaterDepthScanModel>> Scan360(Ship ship)
         {
-            return ScanDirection(ship, -ship.transform.forward);
-        }
+            var results = new Dictionary<float, List<WaterDepthScanModel>>();
 
-        internal static List<WaterDepthScanModel> ScanLeft(Ship ship)
-        {
-            return ScanDirection(ship, -ship.transform.right);
-        }
+            for (var angle = 0f; angle < 360f; angle += ScanAngleInterval)
+            {
+                var direction = Quaternion.AngleAxis(angle, Vector3.up) * ship.transform.forward;
+                results[angle] = ScanDirection(ship, direction);
+            }
 
-        internal static List<WaterDepthScanModel> ScanRight(Ship ship)
-        {
-            return ScanDirection(ship, ship.transform.right);
+            return results;
         }
 
         internal static bool TryGetDepthUnderShip(Ship ship, out float depth)
@@ -79,38 +104,7 @@ namespace HexSailingPilot.Terrain
 
         internal static bool IsNavigableDepth(float depth)
         {
-            return depth >= MinimumNavigableDepth;
-        }
-
-        internal static bool IsPreferredDepth(float depth)
-        {
-            return depth >= PreferredDepth;
-        }
-
-        private static List<WaterDepthScanModel> ScanDirection(Ship ship, Vector3 direction)
-        {
-            var results = new List<WaterDepthScanModel>(ScanDistances.Length);
-            WaterVolume waterVolume = null;
-
-            direction.y = 0f;
-            direction.Normalize();
-
-            foreach (var distance in ScanDistances)
-            {
-                var position = ship.transform.position + direction * distance;
-
-                var hasDepth = TryGetDepth(position, ref waterVolume, out var depth);
-                var isSafe = hasDepth && IsNavigableDepth(depth);
-
-                results.Add(new WaterDepthScanModel(
-                    distance,
-                    position,
-                    hasDepth,
-                    depth,
-                    isSafe));
-            }
-
-            return results;
+            return depth > MinimumNavigableDepth;
         }
     }
 }
