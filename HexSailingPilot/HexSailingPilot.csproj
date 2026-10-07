@@ -81,7 +81,6 @@
     <Compile Include="Navigation\DetourDirectionSelector.cs" />
     <Compile Include="Navigation\MapDestinationService.cs" />
     <Compile Include="Navigation\SailingPropulsionController.cs" />
-    <Compile Include="Navigation\ShallowWaterEscapeDirectionEnum.cs" />
     <Compile Include="Navigation\ShallowWaterEscapeDirectionSelector.cs" />
     <Compile Include="Navigation\SteeringCalculator.cs" />
     <Compile Include="ShipAccess\ShipAccessor.cs" />
@@ -94,7 +93,6 @@
     <Compile Include="Plugin.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Navigation\SailingPilotController.cs" />
-    <Compile Include="Models\SailingRouteModel.cs" />
     <Compile Include="Navigation\ShipObstacleScanner.cs" />
     <Compile Include="Models\ShipObstacleScanResultModel.cs" />
     <Compile Include="Models\WaterDepthScanModel.cs" />
