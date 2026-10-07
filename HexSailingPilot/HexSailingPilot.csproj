@@ -77,14 +77,14 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="HexSailingPilot\Navigation\CapsizeProtectionController.cs" />
-    <Compile Include="HexSailingPilot\Navigation\DetourDirectionSelector.cs" />
-    <Compile Include="HexSailingPilot\Navigation\MapDestinationService.cs" />
-    <Compile Include="HexSailingPilot\Navigation\SailingPropulsionController.cs" />
-    <Compile Include="HexSailingPilot\Navigation\ShallowWaterEscapeDirectionEnum.cs" />
-    <Compile Include="HexSailingPilot\Navigation\ShallowWaterEscapeDirectionSelector.cs" />
-    <Compile Include="HexSailingPilot\Navigation\SteeringCalculator.cs" />
-    <Compile Include="HexSailingPilot\ShipAccess\ShipAccessor.cs" />
+    <Compile Include="Navigation\CapsizeProtectionController.cs" />
+    <Compile Include="Navigation\DetourDirectionSelector.cs" />
+    <Compile Include="Navigation\MapDestinationService.cs" />
+    <Compile Include="Navigation\SailingPropulsionController.cs" />
+    <Compile Include="Navigation\ShallowWaterEscapeDirectionEnum.cs" />
+    <Compile Include="Navigation\ShallowWaterEscapeDirectionSelector.cs" />
+    <Compile Include="Navigation\SteeringCalculator.cs" />
+    <Compile Include="ShipAccess\ShipAccessor.cs" />
     <Compile Include="Models\SailingCourseModel.cs" />
     <Compile Include="Patches\ChatPatch.cs" />
     <Compile Include="Patches\HudAwakePatch.cs" />
@@ -93,10 +93,10 @@
     <Compile Include="Patches\ShipControllsPatch.cs" />
     <Compile Include="Plugin.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="HexSailingPilot\Navigation\SailingPilotController.cs" />
+    <Compile Include="Navigation\SailingPilotController.cs" />
     <Compile Include="Models\SailingRouteModel.cs" />
-    <Compile Include="ShipObstacleScanner.cs" />
-    <Compile Include="ShipObstacleScanResult.cs" />
+    <Compile Include="Navigation\ShipObstacleScanner.cs" />
+    <Compile Include="Models\ShipObstacleScanResultModel.cs" />
     <Compile Include="Models\WaterDepthScanModel.cs" />
     <Compile Include="Terrain\WaterDepthScanner.cs" />
   </ItemGroup>

@@ -1,6 +1,7 @@
 ﻿using HexSailingPilot.Models;
 using HexSailingPilot.ShipAccess;
 using HexSailingPilot.Terrain;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace HexSailingPilot.Navigation
@@ -15,6 +16,8 @@ namespace HexSailingPilot.Navigation
         private const float MinimumDetourDuration = 3f;
         private const float MinimumDetourDistance = 25f;
         private const int RequiredClearConfirmations = 3;
+        private const float LeviathanAvoidanceTurnDegrees = 45f;
+        private const float LeviathanClearance = 15f;
 
         private enum PilotStateEnum
         {
@@ -42,6 +45,12 @@ namespace HexSailingPilot.Navigation
         private static float _nextDetourRecheckTime;
         private static float _detourStartTime;
         private static int _destinationClearStreak;
+
+        private static bool _leviathanAvoidanceActive;
+        private static Vector3 _leviathanAvoidanceDirection;
+        private static Vector3 _leviathanPassDirection;
+        private static Bounds _leviathanBounds;
+        private static float _leviathanAvoidanceSide;
 
         internal static void ApplyControls(Ship ship, Vector3 playerMoveDir, ref Vector3 moveDir)
         {
@@ -84,7 +93,9 @@ namespace HexSailingPilot.Navigation
                 return;
             }
 
-            var distanceToDestination = SteeringCalculator.GetDistanceToDestination(_course, ship.transform.position);
+            var distanceToDestination = SteeringCalculator.GetDistanceToDestination(
+                _course,
+                ship.transform.position);
 
             if (distanceToDestination <= ArrivalDistance)
             {
@@ -111,16 +122,41 @@ namespace HexSailingPilot.Navigation
             var directionToDestination = _course.Destination - ship.transform.position;
             directionToDestination.y = 0f;
 
-            var obstacleDetected = ShipObstacleScanner.IsDirectionBlocked(
+            var obstacleResult = ShipObstacleScanner.ScanDirection(
                 ship,
-                directionToDestination,
-                out var obstacleDistance);
+                directionToDestination);
+
+            var obstacleDetected = obstacleResult.IsBlocked;
 
             if (unsafeWaterDetected || obstacleDetected)
             {
+                if (obstacleResult.Leviathan != null)
+                {
+                    var leviathans = ShipObstacleScanner.ScanLeviathans(
+                        ship,
+                        directionToDestination);
+
+                    if (TryGetLeviathanClusterBounds(leviathans, out var clusterBounds))
+                    {
+                        obstacleResult.Bounds = clusterBounds;
+                        obstacleResult.HasBounds = true;
+
+                        if (TryStartLeviathanAvoidance(ship, obstacleResult))
+                        {
+                            ApplyDetour(ship, rudderValue, ref moveDir);
+                            return;
+                        }
+                    }
+                }
+
                 if (TryStartDetour(ship))
                 {
-                    ApplySteering(ship, _detourDirection, rudderValue, ref moveDir);
+                    ApplySteering(
+                        ship,
+                        _detourDirection,
+                        rudderValue,
+                        ref moveDir);
+
                     return;
                 }
 
@@ -131,18 +167,25 @@ namespace HexSailingPilot.Navigation
                     $"Pilot destination path blocked | " +
                     $"Water: {unsafeWaterDetected} | " +
                     $"Obstacle: {obstacleDetected} | " +
-                    $"ObstacleDistance: {obstacleDistance:F1}m | " +
+                    $"ObstacleDistance: {obstacleResult.Distance:F1}m | " +
                     $"No detour available");
 
                 ApplyStop(ship, rudderValue, ref moveDir);
                 return;
             }
 
-            var lookAheadPoint = SteeringCalculator.GetLookAheadPoint(_course, ship.transform.position);
+            var lookAheadPoint = SteeringCalculator.GetLookAheadPoint(
+                _course,
+                ship.transform.position);
+
             var directionToTarget = lookAheadPoint - ship.transform.position;
             directionToTarget.y = 0f;
 
-            ApplySteering(ship, directionToTarget, rudderValue, ref moveDir);
+            ApplySteering(
+                ship,
+                directionToTarget,
+                rudderValue,
+                ref moveDir);
         }
 
         internal static bool IsActive()
@@ -200,8 +243,21 @@ namespace HexSailingPilot.Navigation
                    ship == _controlledShip;
         }
 
-        private static void ApplyDetour(Ship ship, float rudderValue, ref Vector3 moveDir)
+        private static void ApplyDetour(
+            Ship ship,
+            float rudderValue,
+            ref Vector3 moveDir)
         {
+            if (_leviathanAvoidanceActive)
+            {
+                ApplyLeviathanAvoidance(
+                    ship,
+                    rudderValue,
+                    ref moveDir);
+
+                return;
+            }
+
             if (Time.time >= _nextDetourRecheckTime)
             {
                 _nextDetourRecheckTime = Time.time + DetourRecheckInterval;
@@ -219,11 +275,13 @@ namespace HexSailingPilot.Navigation
                     _destinationClearStreak = 0;
                 }
 
-                var minimumProgressReached = detourElapsed >= MinimumDetourDuration &&
-                                             detourDistance >= MinimumDetourDistance;
+                var minimumProgressReached =
+                    detourElapsed >= MinimumDetourDuration &&
+                    detourDistance >= MinimumDetourDistance;
 
-                var confirmedClear = minimumProgressReached &&
-                                     _destinationClearStreak >= RequiredClearConfirmations;
+                var confirmedClear =
+                    minimumProgressReached &&
+                    _destinationClearStreak >= RequiredClearConfirmations;
 
                 if (confirmedClear)
                 {
@@ -238,6 +296,7 @@ namespace HexSailingPilot.Navigation
                         $"Elapsed: {detourElapsed:F1}s | " +
                         $"Distance: {detourDistance:F1}m | " +
                         $"ConfirmedStreak: {RequiredClearConfirmations}");
+
                     return;
                 }
 
@@ -248,7 +307,8 @@ namespace HexSailingPilot.Navigation
                         _state = PilotStateEnum.Stopping;
                         _stopReason = StopReasonEnum.PathBlocked;
 
-                        Plugin.Log.LogInfo("Detour blocked | No alternate safe direction");
+                        Plugin.Log.LogInfo(
+                            "Detour blocked | No alternate safe direction");
 
                         ApplyStop(ship, rudderValue, ref moveDir);
                         return;
@@ -256,7 +316,11 @@ namespace HexSailingPilot.Navigation
                 }
             }
 
-            ApplySteering(ship, _detourDirection, rudderValue, ref moveDir);
+            ApplySteering(
+                ship,
+                _detourDirection,
+                rudderValue,
+                ref moveDir);
         }
 
         private static bool TryStartDetour(Ship ship)
@@ -295,7 +359,9 @@ namespace HexSailingPilot.Navigation
 
         private static bool IsDestinationPathClear(Ship ship)
         {
-            var directionToDestination = _course.Destination - ship.transform.position;
+            var directionToDestination =
+                _course.Destination - ship.transform.position;
+
             directionToDestination.y = 0f;
 
             if (directionToDestination.sqrMagnitude <= 0.001f)
@@ -303,22 +369,32 @@ namespace HexSailingPilot.Navigation
                 return true;
             }
 
-            if (ShipObstacleScanner.IsDirectionBlocked(ship, directionToDestination, out _))
+            if (ShipObstacleScanner.IsDirectionBlocked(
+                ship,
+                directionToDestination,
+                out _))
             {
                 return false;
             }
 
-            return IsDepthPathSafe(ship, directionToDestination);
+            return IsDepthPathSafe(
+                ship,
+                directionToDestination);
         }
 
-        private static bool IsDirectionSafe(Ship ship, Vector3 direction)
+        private static bool IsDirectionSafe(
+            Ship ship,
+            Vector3 direction)
         {
             if (direction.sqrMagnitude <= 0.001f)
             {
                 return false;
             }
 
-            if (ShipObstacleScanner.IsDirectionBlocked(ship, direction, out _))
+            if (ShipObstacleScanner.IsDirectionBlocked(
+                ship,
+                direction,
+                out _))
             {
                 return false;
             }
@@ -326,9 +402,13 @@ namespace HexSailingPilot.Navigation
             return IsDepthPathSafe(ship, direction);
         }
 
-        private static bool IsDepthPathSafe(Ship ship, Vector3 direction)
+        private static bool IsDepthPathSafe(
+            Ship ship,
+            Vector3 direction)
         {
-            var results = WaterDepthScanner.ScanDirection(ship, direction);
+            var results = WaterDepthScanner.ScanDirection(
+                ship,
+                direction);
 
             if (results == null || results.Count == 0)
             {
@@ -346,7 +426,11 @@ namespace HexSailingPilot.Navigation
             return true;
         }
 
-        private static void ApplySteering(Ship ship, Vector3 direction, float rudderValue, ref Vector3 moveDir)
+        private static void ApplySteering(
+            Ship ship,
+            Vector3 direction,
+            float rudderValue,
+            ref Vector3 moveDir)
         {
             direction.y = 0f;
 
@@ -356,14 +440,26 @@ namespace HexSailingPilot.Navigation
                 return;
             }
 
-            SailingPropulsionController.Apply(ship, ref moveDir);
+            SailingPropulsionController.Apply(
+                ship,
+                ref moveDir);
 
-            var targetHeading = SteeringCalculator.GetHeading(direction);
-            var currentHeading = SteeringCalculator.GetHeading(ship.transform.forward);
-            var headingError = Mathf.DeltaAngle(currentHeading, targetHeading);
-            var targetRudder = SteeringCalculator.GetTargetRudder(headingError);
+            var targetHeading =
+                SteeringCalculator.GetHeading(direction);
 
-            SteeringCalculator.SetRudderInput(targetRudder, rudderValue, ref moveDir);
+            var currentHeading =
+                SteeringCalculator.GetHeading(ship.transform.forward);
+
+            var headingError =
+                Mathf.DeltaAngle(currentHeading, targetHeading);
+
+            var targetRudder =
+                SteeringCalculator.GetTargetRudder(headingError);
+
+            SteeringCalculator.SetRudderInput(
+                targetRudder,
+                rudderValue,
+                ref moveDir);
         }
 
         private static bool ScanDepth(Ship ship)
@@ -373,9 +469,12 @@ namespace HexSailingPilot.Navigation
                 return false;
             }
 
-            _nextDepthScanTime = Time.time + DepthScanInterval;
+            _nextDepthScanTime =
+                Time.time + DepthScanInterval;
 
-            var directionToDestination = _course.Destination - ship.transform.position;
+            var directionToDestination =
+                _course.Destination - ship.transform.position;
+
             directionToDestination.y = 0f;
 
             if (directionToDestination.sqrMagnitude <= 0.001f)
@@ -383,7 +482,9 @@ namespace HexSailingPilot.Navigation
                 return false;
             }
 
-            var results = WaterDepthScanner.ScanDirection(ship, directionToDestination);
+            var results = WaterDepthScanner.ScanDirection(
+                ship,
+                directionToDestination);
 
             foreach (var result in results)
             {
@@ -399,7 +500,8 @@ namespace HexSailingPilot.Navigation
 
             var nearestResult = results[0];
 
-            return nearestResult.HasDepth && !nearestResult.IsSafe;
+            return nearestResult.HasDepth &&
+                   !nearestResult.IsSafe;
         }
 
         private static void StopShip(Ship ship)
@@ -411,7 +513,9 @@ namespace HexSailingPilot.Navigation
 
             if (ShipAccessor.StopMethod == null)
             {
-                Plugin.Log.LogWarning("Ship.Stop method was not found.");
+                Plugin.Log.LogWarning(
+                    "Ship.Stop method was not found.");
+
                 return;
             }
 
@@ -428,19 +532,25 @@ namespace HexSailingPilot.Navigation
             }
 
             var velocity = body.linearVelocity;
+
             velocity.x *= 0.1f;
             velocity.z *= 0.1f;
+
             body.linearVelocity = velocity;
         }
 
-        private static void TakeManualControl(Ship ship, Vector3 playerMoveDir)
+        private static void TakeManualControl(
+            Ship ship,
+            Vector3 playerMoveDir)
         {
             ShipAccessor.ForwardPressed(ship) = false;
             ShipAccessor.BackwardPressed(ship) = false;
 
             Plugin.Log.LogInfo(
                 $"Pilot manual takeover | " +
-                $"PlayerInput: ({playerMoveDir.x:+0.00;-0.00;0.00}, {playerMoveDir.z:+0.00;-0.00;0.00})");
+                $"PlayerInput: " +
+                $"({playerMoveDir.x:+0.00;-0.00;0.00}, " +
+                $"{playerMoveDir.z:+0.00;-0.00;0.00})");
 
             Disengage();
         }
@@ -456,21 +566,34 @@ namespace HexSailingPilot.Navigation
             _detourStartPosition = Vector3.zero;
             _destinationClearStreak = 0;
 
+            ClearLeviathanAvoidance();
+
             Plugin.Log.LogInfo("Pilot disengaged");
         }
 
         private static bool HasManualInput(Vector3 playerMoveDir)
         {
-            return Mathf.Abs(playerMoveDir.x) > ManualSteeringThreshold ||
-                   playerMoveDir.z > ManualSpeedThreshold ||
-                   playerMoveDir.z < -ManualSpeedThreshold;
+            return Mathf.Abs(playerMoveDir.x) >
+                       ManualSteeringThreshold ||
+                   playerMoveDir.z >
+                       ManualSpeedThreshold ||
+                   playerMoveDir.z <
+                       -ManualSpeedThreshold;
         }
 
-        private static void ApplyStop(Ship ship, float rudderValue, ref Vector3 moveDir)
+        private static void ApplyStop(
+            Ship ship,
+            float rudderValue,
+            ref Vector3 moveDir)
         {
-            SteeringCalculator.SetRudderInput(0f, rudderValue, ref moveDir);
+            SteeringCalculator.SetRudderInput(
+                0f,
+                rudderValue,
+                ref moveDir);
 
-            SailingPropulsionController.Stop(ship, ref moveDir);
+            SailingPropulsionController.Stop(
+                ship,
+                ref moveDir);
 
             if (ShipAccessor.ShipSpeed(ship) != Ship.Speed.Stop)
             {
@@ -481,8 +604,14 @@ namespace HexSailingPilot.Navigation
 
             if (body != null)
             {
-                var horizontalVelocity = new Vector3(body.linearVelocity.x, 0f, body.linearVelocity.z);
-                var horizontalSpeed = horizontalVelocity.magnitude;
+                var horizontalVelocity =
+                    new Vector3(
+                        body.linearVelocity.x,
+                        0f,
+                        body.linearVelocity.z);
+
+                var horizontalSpeed =
+                    horizontalVelocity.magnitude;
 
                 if (horizontalSpeed > 0.1f)
                 {
@@ -491,7 +620,8 @@ namespace HexSailingPilot.Navigation
                 }
             }
 
-            if (Mathf.Abs(rudderValue) > SteeringCalculator.RudderTolerance)
+            if (Mathf.Abs(rudderValue) >
+                SteeringCalculator.RudderTolerance)
             {
                 return;
             }
@@ -500,32 +630,43 @@ namespace HexSailingPilot.Navigation
 
             if (_stopReason == StopReasonEnum.PathBlocked)
             {
-                Plugin.Log.LogInfo("Pilot stopped | No safe detour available");
+                Plugin.Log.LogInfo(
+                    "Pilot stopped | No safe detour available");
 
                 ClearCourse();
+
                 _lastShip = null;
                 _state = PilotStateEnum.Inactive;
                 _stopReason = StopReasonEnum.None;
                 _detourDirection = Vector3.zero;
                 _detourStartPosition = Vector3.zero;
+                _destinationClearStreak = 0;
+
+                ClearLeviathanAvoidance();
                 return;
             }
 
             Plugin.Log.LogInfo("Pilot complete");
 
             ClearCourse();
+
             _lastShip = null;
             _state = PilotStateEnum.Inactive;
             _stopReason = StopReasonEnum.None;
             _detourDirection = Vector3.zero;
             _detourStartPosition = Vector3.zero;
+            _destinationClearStreak = 0;
+
+            ClearLeviathanAvoidance();
         }
 
         private static void StartCourse(Ship ship)
         {
             if (!MapDestinationService.Destination.HasValue)
             {
-                Plugin.Log.LogInfo("Pilot cannot start | No map destination selected");
+                Plugin.Log.LogInfo(
+                    "Pilot cannot start | No map destination selected");
+
                 return;
             }
 
@@ -536,6 +677,8 @@ namespace HexSailingPilot.Navigation
             _detourStartPosition = Vector3.zero;
             _nextDepthScanTime = 0f;
             _nextDetourRecheckTime = 0f;
+
+            ClearLeviathanAvoidance();
 
             _course = new SailingCourseModel(
                 ship.transform.position,
@@ -561,7 +704,8 @@ namespace HexSailingPilot.Navigation
                 $"Origin: {_course.Origin} | " +
                 $"Destination: {_course.Destination} | " +
                 $"Distance: {_course.Length:F0}m | " +
-                $"Heading: {SteeringCalculator.GetHeading(_course.Direction):F1}°");
+                $"Heading: " +
+                $"{SteeringCalculator.GetHeading(_course.Direction):F1}°");
 
             if (firstUnsafePoint == null)
             {
@@ -587,6 +731,195 @@ namespace HexSailingPilot.Navigation
         private static void ClearCourse()
         {
             _course = null;
+        }
+
+        private static bool TryStartLeviathanAvoidance(Ship ship, ShipObstacleScanResultModel obstacle)
+        {
+            var directionToDestination = _course.Destination - ship.transform.position;
+            directionToDestination.y = 0f;
+
+            if (directionToDestination.sqrMagnitude <= 0.001f)
+            {
+                return false;
+            }
+
+            directionToDestination.Normalize();
+
+            var leftDirection = Quaternion.AngleAxis(-LeviathanAvoidanceTurnDegrees, Vector3.up) * directionToDestination;
+            var rightDirection = Quaternion.AngleAxis(LeviathanAvoidanceTurnDegrees, Vector3.up) * directionToDestination;
+
+            leftDirection.y = 0f;
+            rightDirection.y = 0f;
+
+            leftDirection.Normalize();
+            rightDirection.Normalize();
+
+            var leftSafe = IsDepthPathSafe(ship, leftDirection);
+            var rightSafe = IsDepthPathSafe(ship, rightDirection);
+
+            Plugin.Log.LogInfo(
+                $"Leviathan avoidance candidates | " +
+                $"LeftSafe: {leftSafe} | " +
+                $"RightSafe: {rightSafe} | " +
+                $"LeftHeading: {SteeringCalculator.GetHeading(leftDirection):F1}° | " +
+                $"RightHeading: {SteeringCalculator.GetHeading(rightDirection):F1}°");
+
+            if (!leftSafe && !rightSafe)
+            {
+                Plugin.Log.LogInfo("Leviathan avoidance rejected | No safe avoidance direction");
+                return false;
+            }
+
+            var useLeft = leftSafe;
+
+            _leviathanAvoidanceActive = true;
+            _leviathanAvoidanceDirection = useLeft ? leftDirection : rightDirection;
+            _leviathanAvoidanceSide = useLeft ? -1f : 1f;
+            _leviathanPassDirection = directionToDestination;
+            _leviathanBounds = obstacle.Bounds;
+
+            _state = PilotStateEnum.Detouring;
+            _detourDirection = Vector3.zero;
+            _detourStartPosition = ship.transform.position;
+            _destinationClearStreak = 0;
+
+            Plugin.Log.LogInfo(
+                $"Leviathan avoidance started | " +
+                $"Side: {(useLeft ? "Left" : "Right")} | " +
+                $"Heading: {SteeringCalculator.GetHeading(_leviathanAvoidanceDirection):F1}° | " +
+                $"ObstacleCenter: {_leviathanBounds.center} | " +
+                $"ObstacleSize: {_leviathanBounds.size}");
+
+            return true;
+        }
+
+        private static void ApplyLeviathanAvoidance(Ship ship, float rudderValue, ref Vector3 moveDir)
+        {
+            if (!_leviathanAvoidanceActive)
+            {
+                _state = PilotStateEnum.Sailing;
+                return;
+            }
+
+            var centerToShip = ship.transform.position - _leviathanBounds.center;
+            centerToShip.y = 0f;
+
+            var lateralDirection = Vector3.Cross(Vector3.up, _leviathanPassDirection).normalized;
+            var lateralPosition = Vector3.Dot(centerToShip, lateralDirection);
+            var lateralExtent = GetBoundsExtentAlongDirection(_leviathanBounds, lateralDirection);
+            var lateralProgress = lateralPosition * _leviathanAvoidanceSide;
+            var requiredLateralProgress = lateralExtent + LeviathanClearance;
+
+            var hasLateralClearance = lateralProgress >= requiredLateralProgress;
+            var destinationPathClear = hasLateralClearance && !ShipObstacleScanner.IsDirectionBlocked(ship, _course.Destination - ship.transform.position, out _);
+
+            if (destinationPathClear)
+            {
+                Plugin.Log.LogInfo(
+                    $"Leviathan avoidance complete | " +
+                    $"LateralProgress: {lateralProgress:F1}m | " +
+                    $"Required: {requiredLateralProgress:F1}m | " +
+                    $"Destination path clear | " +
+                    $"Resuming destination course");
+
+                ClearLeviathanAvoidance();
+                _state = PilotStateEnum.Sailing;
+                return;
+            }
+
+            if (!IsDepthPathSafe(ship, _leviathanAvoidanceDirection))
+            {
+                Plugin.Log.LogInfo("Leviathan avoidance blocked | Committed direction is no longer depth safe");
+
+                _state = PilotStateEnum.Stopping;
+                _stopReason = StopReasonEnum.PathBlocked;
+
+                ApplyStop(ship, rudderValue, ref moveDir);
+                return;
+            }
+
+            var currentHeading = SteeringCalculator.GetHeading(ship.transform.forward);
+            var targetHeading = SteeringCalculator.GetHeading(_leviathanAvoidanceDirection);
+
+            Plugin.Log.LogInfo(
+                $"Leviathan avoidance | " +
+                $"CurrentHeading: {currentHeading:F1}° | " +
+                $"TargetHeading: {targetHeading:F1}° | " +
+                $"LateralProgress: {lateralProgress:F1}m | " +
+                $"Required: {requiredLateralProgress:F1}m");
+
+            ApplySteering(ship, _leviathanAvoidanceDirection, rudderValue, ref moveDir);
+        }
+
+        private static void ClearLeviathanAvoidance()
+        {
+            _leviathanAvoidanceActive = false;
+            _leviathanAvoidanceDirection = Vector3.zero;
+            _leviathanAvoidanceSide = 0f;
+            _leviathanPassDirection = Vector3.zero;
+            _leviathanBounds = default;
+        }
+
+        private static float GetBoundsExtentAlongDirection(
+            Bounds bounds,
+            Vector3 direction)
+        {
+            direction.y = 0f;
+
+            if (direction.sqrMagnitude <= 0.001f)
+            {
+                return 0f;
+            }
+
+            direction.Normalize();
+
+            return Mathf.Abs(direction.x) * bounds.extents.x +
+                   Mathf.Abs(direction.z) * bounds.extents.z;
+        }
+
+        private static bool TryGetLeviathanClusterBounds(
+    List<ShipObstacleScanResultModel> leviathans,
+    out Bounds clusterBounds)
+        {
+            clusterBounds = default;
+
+            if (leviathans == null || leviathans.Count == 0)
+            {
+                return false;
+            }
+
+            var initialized = false;
+
+            foreach (var leviathan in leviathans)
+            {
+                if (!leviathan.HasBounds)
+                {
+                    continue;
+                }
+
+                if (!initialized)
+                {
+                    clusterBounds = leviathan.Bounds;
+                    initialized = true;
+                }
+                else
+                {
+                    clusterBounds.Encapsulate(leviathan.Bounds);
+                }
+            }
+
+            if (!initialized)
+            {
+                return false;
+            }
+
+            Plugin.Log.LogInfo(
+                $"Leviathan cluster | " +
+                $"Count: {leviathans.Count} | " +
+                $"Center: ({clusterBounds.center.x:F1}, {clusterBounds.center.y:F1}, {clusterBounds.center.z:F1}) | " +
+                $"Size: ({clusterBounds.size.x:F1}, {clusterBounds.size.y:F1}, {clusterBounds.size.z:F1})");
+
+            return true;
         }
     }
 }
