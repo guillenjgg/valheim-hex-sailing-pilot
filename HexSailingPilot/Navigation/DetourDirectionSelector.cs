@@ -8,11 +8,7 @@ namespace HexSailingPilot.Navigation
     {
         private const float ScanAngleInterval = 30f;
 
-        internal static bool TrySelect(
-            Ship ship,
-            Vector3 destination,
-            out Vector3 bestDirection,
-            out float bestAngle)
+        internal static bool TrySelect(Ship ship, Vector3 destination, Vector3 preferredDirection, out Vector3 bestDirection, out float bestAngle)
         {
             bestDirection = Vector3.zero;
             bestAngle = 0f;
@@ -27,7 +23,17 @@ namespace HexSailingPilot.Navigation
 
             directionToDestination.Normalize();
 
-            var bestHeadingError = float.PositiveInfinity;
+            preferredDirection.y = 0f;
+
+            if (preferredDirection.sqrMagnitude <= 0.001f)
+            {
+                preferredDirection = ship.transform.forward;
+                preferredDirection.y = 0f;
+            }
+
+            preferredDirection.Normalize();
+
+            var bestScore = float.PositiveInfinity;
             var found = false;
 
             for (var angle = 0f; angle < 360f; angle += ScanAngleInterval)
@@ -46,14 +52,17 @@ namespace HexSailingPilot.Navigation
                     continue;
                 }
 
-                var headingError = Vector3.Angle(directionToDestination, direction);
+                var destinationError = Vector3.Angle(directionToDestination, direction);
+                var preferredError = Vector3.Angle(preferredDirection, direction);
 
-                if (headingError >= bestHeadingError)
+                var score = destinationError + preferredError * 2f;
+
+                if (score >= bestScore)
                 {
                     continue;
                 }
 
-                bestHeadingError = headingError;
+                bestScore = score;
                 bestDirection = direction.normalized;
                 bestAngle = angle;
                 found = true;

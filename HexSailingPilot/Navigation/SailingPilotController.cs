@@ -11,6 +11,7 @@ namespace HexSailingPilot.Navigation
         private const float ArrivalDistance = 10f;
         private const float WaypointReachedDistance = 10f;
         private const float WaypointPassedDistance = 5f;
+        private const float WaypointLookAheadDistance = 30f;
         private const float ManualSteeringThreshold = 0.5f;
         private const float ManualSpeedThreshold = 0.5f;
         private const float DepthScanInterval = 1f;
@@ -19,6 +20,9 @@ namespace HexSailingPilot.Navigation
         private const int RequiredClearConfirmations = 3;
         private const float LeviathanAvoidanceTurnDegrees = 45f;
         private const float LeviathanClearance = 15f;
+        private const int DistanceMessageInterval = 50;
+        private static int _nextDistanceMessage;
+        private static float _nextSteeringLogTime;
 
         private enum PilotStateEnum
         {
@@ -114,6 +118,7 @@ namespace HexSailingPilot.Navigation
                 return;
             }
 
+            UpdateDistanceMessage(ship);
             UpdateWaypointTracking(ship);
 
             if (_state == PilotStateEnum.Detouring)
@@ -314,6 +319,7 @@ namespace HexSailingPilot.Navigation
             if (!DetourDirectionSelector.TrySelect(
                 ship,
                 GetNavigationTarget(),
+                _detourDirection,
                 out var detourDirection,
                 out var detourAngle))
             {
@@ -412,11 +418,7 @@ namespace HexSailingPilot.Navigation
             return true;
         }
 
-        private static void ApplySteering(
-            Ship ship,
-            Vector3 direction,
-            float rudderValue,
-            ref Vector3 moveDir)
+        private static void ApplySteering(Ship ship, Vector3 direction, float rudderValue, ref Vector3 moveDir)
         {
             direction.y = 0f;
 
@@ -426,26 +428,39 @@ namespace HexSailingPilot.Navigation
                 return;
             }
 
-            SailingPropulsionController.Apply(
-                ship,
-                ref moveDir);
+            SailingPropulsionController.Apply(ship, ref moveDir);
 
-            var targetHeading =
-                SteeringCalculator.GetHeading(direction);
+            var targetHeading = SteeringCalculator.GetHeading(direction);
+            var currentHeading = SteeringCalculator.GetHeading(ship.transform.forward);
+            var headingError = Mathf.DeltaAngle(currentHeading, targetHeading);
+            var targetRudder = SteeringCalculator.GetTargetRudder(headingError);
 
-            var currentHeading =
-                SteeringCalculator.GetHeading(ship.transform.forward);
+            SteeringCalculator.SetRudderInput(targetRudder, rudderValue, ref moveDir);
 
-            var headingError =
-                Mathf.DeltaAngle(currentHeading, targetHeading);
+            if (Time.time >= _nextSteeringLogTime)
+            {
+                _nextSteeringLogTime = Time.time + 1f;
 
-            var targetRudder =
-                SteeringCalculator.GetTargetRudder(headingError);
+                var shipPosition = ship.transform.position;
+                var targetPosition = shipPosition + direction;
+                var body = ShipAccessor.ShipBody(ship);
+                var shipVelocity = body != null ? body.linearVelocity : Vector3.zero;
+                shipVelocity.y = 0f;
 
-            SteeringCalculator.SetRudderInput(
-                targetRudder,
-                rudderValue,
-                ref moveDir);
+                Plugin.Log.LogInfo(
+                    $"Steering diagnostic | " +
+                    $"State: {_state} | " +
+                    $"ShipPosition: {shipPosition} | " +
+                    $"ShipHeading: {currentHeading:F1}° | " +
+                    $"TargetHeading: {targetHeading:F1}° | " +
+                    $"HeadingError: {headingError:+0.0;-0.0;0.0}° | " +
+                    $"TargetRudder: {targetRudder:F2} | " +
+                    $"ActualRudder: {rudderValue:F2} | " +
+                    $"RudderInput: {moveDir.x:F2} | " +
+                    $"Waypoint: {_currentWaypointIndex}/{_waypoints.Count} | " +
+                    $"TargetPosition: {targetPosition} | " +
+                    $"Speed: {shipVelocity.magnitude:F1}m/s");
+            }
         }
 
         private static bool ScanDepth(Ship ship)
@@ -658,10 +673,18 @@ namespace HexSailingPilot.Navigation
             _detourStartPosition = Vector3.zero;
             _nextDepthScanTime = 0f;
             _nextDetourRecheckTime = 0f;
+            _nextSteeringLogTime = 0f;
 
             ClearLeviathanAvoidance();
 
             _course = new SailingCourseModel(ship.transform.position, MapDestinationService.Destination.Value);
+
+            _nextDistanceMessage = Mathf.FloorToInt(_course.Length / DistanceMessageInterval)
+    * DistanceMessageInterval;
+
+            MessageHud.instance?.ShowMessage(
+                MessageHud.MessageType.TopLeft,
+                $"Autopilot | Destination: {Mathf.CeilToInt(_course.Length)}m");
 
             var routeScan = WaterDepthScanner.ScanRoute(_course.Origin, _course.Destination);
             WaterDepthScanModel firstUnsafePoint = null;
@@ -727,7 +750,41 @@ namespace HexSailingPilot.Navigation
                 return _course.Destination;
             }
 
-            return _waypoints[_currentWaypointIndex];
+            var shipPosition = _controlledShip.transform.position;
+            var segmentIndex = Mathf.Max(1, _currentWaypointIndex);
+            var start = _waypoints[segmentIndex - 1];
+            var end = _waypoints[segmentIndex];
+            var segment = end - start;
+            segment.y = 0f;
+
+            var fromStart = shipPosition - start;
+            fromStart.y = 0f;
+
+            var progress = segment.sqrMagnitude > 0.001f
+                ? Mathf.Clamp01(Vector3.Dot(fromStart, segment) / segment.sqrMagnitude)
+                : 1f;
+
+            var projectedPosition = start + segment * progress;
+            var remainingDistance = WaypointLookAheadDistance;
+
+            for (var index = segmentIndex; index <= _waypoints.Count; index++)
+            {
+                var segmentEnd = index < _waypoints.Count ? _waypoints[index] : _course.Destination;
+                var offset = segmentEnd - projectedPosition;
+                offset.y = 0f;
+
+                var distance = offset.magnitude;
+
+                if (distance >= remainingDistance)
+                {
+                    return projectedPosition + offset.normalized * remainingDistance;
+                }
+
+                remainingDistance -= distance;
+                projectedPosition = segmentEnd;
+            }
+
+            return _course.Destination;
         }
 
         private static void UpdateWaypointTracking(Ship ship)
@@ -739,35 +796,34 @@ namespace HexSailingPilot.Navigation
 
             var shipPosition = ship.transform.position;
 
+            if (_currentWaypointIndex == 0)
+            {
+                _currentWaypointIndex = 1;
+                Plugin.Log.LogInfo($"Waypoint tracking | Index: 1/{_waypoints.Count}");
+            }
+
             while (_currentWaypointIndex < _waypoints.Count)
             {
+                var previous = _waypoints[_currentWaypointIndex - 1];
                 var waypoint = _waypoints[_currentWaypointIndex];
+
+                var segment = waypoint - previous;
+                segment.y = 0f;
+
+                var fromPrevious = shipPosition - previous;
+                fromPrevious.y = 0f;
+
                 var offset = waypoint - shipPosition;
                 offset.y = 0f;
 
                 var distance = offset.magnitude;
-                var reached = distance <= WaypointReachedDistance;
-                var passed = false;
 
-                if (!reached && _currentWaypointIndex > 0)
-                {
-                    var previousWaypoint = _waypoints[_currentWaypointIndex - 1];
-                    var segment = waypoint - previousWaypoint;
-                    segment.y = 0f;
+                var progress = segment.sqrMagnitude > 0.001f
+                    ? Vector3.Dot(fromPrevious, segment) / segment.sqrMagnitude
+                    : 1f;
 
-                    if (segment.sqrMagnitude > 0.001f)
-                    {
-                        var fromPrevious = shipPosition - previousWaypoint;
-                        fromPrevious.y = 0f;
-
-                        var progress = Vector3.Dot(fromPrevious, segment) / segment.sqrMagnitude;
-                        var closestPoint = previousWaypoint + segment * Mathf.Clamp01(progress);
-                        var lateralOffset = shipPosition - closestPoint;
-                        lateralOffset.y = 0f;
-
-                        passed = progress >= 1f && lateralOffset.magnitude <= WaypointPassedDistance;
-                    }
-                }
+                var reached = distance <= WaypointPassedDistance;
+                var passed = progress >= 1f;
 
                 if (!reached && !passed)
                 {
@@ -779,8 +835,8 @@ namespace HexSailingPilot.Navigation
                 Plugin.Log.LogInfo(
                     $"Waypoint {(passed ? "passed" : "reached")} | " +
                     $"Index: {_currentWaypointIndex}/{_waypoints.Count} | " +
-                    $"Position: {waypoint} | " +
-                    $"Distance: {distance:F1}m");
+                    $"Distance: {distance:F1}m | " +
+                    $"Progress: {progress:F2}");
             }
 
             if (_currentWaypointIndex == _waypoints.Count)
@@ -923,9 +979,7 @@ namespace HexSailingPilot.Navigation
             _leviathanBounds = default;
         }
 
-        private static float GetBoundsExtentAlongDirection(
-            Bounds bounds,
-            Vector3 direction)
+        private static float GetBoundsExtentAlongDirection(Bounds bounds, Vector3 direction)
         {
             direction.y = 0f;
 
@@ -981,6 +1035,30 @@ namespace HexSailingPilot.Navigation
                 $"Size: ({clusterBounds.size.x:F1}, {clusterBounds.size.y:F1}, {clusterBounds.size.z:F1})");
 
             return true;
+        }
+
+        private static void UpdateDistanceMessage(Ship ship)
+        {
+            if (_course == null || MessageHud.instance == null)
+            {
+                return;
+            }
+
+            var offset = _course.Destination - ship.transform.position;
+            offset.y = 0f;
+
+            var distance = offset.magnitude;
+
+            if (distance > _nextDistanceMessage)
+            {
+                return;
+            }
+
+            MessageHud.instance.ShowMessage(
+                MessageHud.MessageType.TopLeft,
+                $"Autopilot | Destination: {Mathf.CeilToInt(distance)}m");
+
+            _nextDistanceMessage -= DistanceMessageInterval;
         }
     }
 }
