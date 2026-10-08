@@ -77,9 +77,13 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Models\SailingNavigationNodeModel.cs" />
+    <Compile Include="Models\SailingPathNodeModel.cs" />
     <Compile Include="Navigation\CapsizeProtectionController.cs" />
     <Compile Include="Navigation\DetourDirectionSelector.cs" />
     <Compile Include="Navigation\MapDestinationService.cs" />
+    <Compile Include="Navigation\SailingNavigationGrid.cs" />
+    <Compile Include="Navigation\SailingPathfinder.cs" />
     <Compile Include="Navigation\SailingPropulsionController.cs" />
     <Compile Include="Navigation\ShallowWaterEscapeDirectionSelector.cs" />
     <Compile Include="Navigation\SteeringCalculator.cs" />

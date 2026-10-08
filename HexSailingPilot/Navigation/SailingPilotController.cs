@@ -14,7 +14,6 @@ namespace HexSailingPilot.Navigation
         private const float DepthScanInterval = 1f;
         private const float DetourRecheckInterval = 1f;
         private const float MinimumDetourDuration = 3f;
-        private const float MinimumDetourDistance = 25f;
         private const int RequiredClearConfirmations = 3;
         private const float LeviathanAvoidanceTurnDegrees = 45f;
         private const float LeviathanClearance = 15f;
@@ -243,10 +242,7 @@ namespace HexSailingPilot.Navigation
                    ship == _controlledShip;
         }
 
-        private static void ApplyDetour(
-            Ship ship,
-            float rudderValue,
-            ref Vector3 moveDir)
+        private static void ApplyDetour(Ship ship, float rudderValue, ref Vector3 moveDir)
         {
             if (_leviathanAvoidanceActive)
             {
@@ -275,12 +271,8 @@ namespace HexSailingPilot.Navigation
                     _destinationClearStreak = 0;
                 }
 
-                var minimumProgressReached =
-                    detourElapsed >= MinimumDetourDuration &&
-                    detourDistance >= MinimumDetourDistance;
-
                 var confirmedClear =
-                    minimumProgressReached &&
+                    detourElapsed >= MinimumDetourDuration &&
                     _destinationClearStreak >= RequiredClearConfirmations;
 
                 if (confirmedClear)
@@ -581,10 +573,7 @@ namespace HexSailingPilot.Navigation
                        -ManualSpeedThreshold;
         }
 
-        private static void ApplyStop(
-            Ship ship,
-            float rudderValue,
-            ref Vector3 moveDir)
+        private static void ApplyStop(Ship ship, float rudderValue, ref Vector3 moveDir)
         {
             SteeringCalculator.SetRudderInput(
                 0f,
@@ -664,9 +653,7 @@ namespace HexSailingPilot.Navigation
         {
             if (!MapDestinationService.Destination.HasValue)
             {
-                Plugin.Log.LogInfo(
-                    "Pilot cannot start | No map destination selected");
-
+                Plugin.Log.LogInfo("Pilot cannot start | No map destination selected");
                 return;
             }
 
@@ -680,14 +667,9 @@ namespace HexSailingPilot.Navigation
 
             ClearLeviathanAvoidance();
 
-            _course = new SailingCourseModel(
-                ship.transform.position,
-                MapDestinationService.Destination.Value);
+            _course = new SailingCourseModel(ship.transform.position, MapDestinationService.Destination.Value);
 
-            var routeScan = WaterDepthScanner.ScanRoute(
-                _course.Origin,
-                _course.Destination);
-
+            var routeScan = WaterDepthScanner.ScanRoute(_course.Origin, _course.Destination);
             WaterDepthScanModel firstUnsafePoint = null;
 
             foreach (var result in routeScan)
@@ -704,8 +686,7 @@ namespace HexSailingPilot.Navigation
                 $"Origin: {_course.Origin} | " +
                 $"Destination: {_course.Destination} | " +
                 $"Distance: {_course.Length:F0}m | " +
-                $"Heading: " +
-                $"{SteeringCalculator.GetHeading(_course.Direction):F1}°");
+                $"Heading: {SteeringCalculator.GetHeading(_course.Direction):F1}°");
 
             if (firstUnsafePoint == null)
             {
@@ -714,18 +695,32 @@ namespace HexSailingPilot.Navigation
                     $"CLEAR | " +
                     $"Distance: {_course.Length:F0}m | " +
                     $"Samples: {routeScan.Count}");
+            }
+            else
+            {
+                Plugin.Log.LogInfo(
+                    $"Route scan | " +
+                    $"BLOCKED | " +
+                    $"RouteDistance: {_course.Length:F0}m | " +
+                    $"FirstUnsafeDistance: {firstUnsafePoint.Distance:F0}m | " +
+                    $"Depth: {firstUnsafePoint.Depth:F1}m | " +
+                    $"HasDepth: {firstUnsafePoint.HasDepth} | " +
+                    $"Position: {firstUnsafePoint.Position}");
+            }
 
+            var path = SailingPathfinder.FindPath(_course.Origin, _course.Destination);
+
+            if (path.Count == 0)
+            {
+                Plugin.Log.LogWarning("Pathfinder | No route");
                 return;
             }
 
             Plugin.Log.LogInfo(
-                $"Route scan | " +
-                $"BLOCKED | " +
-                $"RouteDistance: {_course.Length:F0}m | " +
-                $"FirstUnsafeDistance: {firstUnsafePoint.Distance:F0}m | " +
-                $"Depth: {firstUnsafePoint.Depth:F1}m | " +
-                $"HasDepth: {firstUnsafePoint.HasDepth} | " +
-                $"Position: {firstUnsafePoint.Position}");
+                $"Pathfinder | Route found | " +
+                $"Nodes: {path.Count} | " +
+                $"Start: {path[0]} | " +
+                $"End: {path[path.Count - 1]}");
         }
 
         private static void ClearCourse()
@@ -877,9 +872,7 @@ namespace HexSailingPilot.Navigation
                    Mathf.Abs(direction.z) * bounds.extents.z;
         }
 
-        private static bool TryGetLeviathanClusterBounds(
-    List<ShipObstacleScanResultModel> leviathans,
-    out Bounds clusterBounds)
+        private static bool TryGetLeviathanClusterBounds(List<ShipObstacleScanResultModel> leviathans, out Bounds clusterBounds)
         {
             clusterBounds = default;
 

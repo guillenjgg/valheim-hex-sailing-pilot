@@ -35,6 +35,8 @@ namespace HexSailingPilot.Terrain
             {
                 var position = ship.transform.position + direction * distance;
 
+                CompareNavigationDepth(position);
+
                 var hasDepth = TryGetDepth(position, ref waterVolume, out var depth);
                 var isSafe = hasDepth && IsNavigableDepth(depth);
 
@@ -52,7 +54,6 @@ namespace HexSailingPilot.Terrain
         internal static List<WaterDepthScanModel> ScanRoute(Vector3 start, Vector3 destination)
         {
             var results = new List<WaterDepthScanModel>();
-            WaterVolume waterVolume = null;
 
             var direction = destination - start;
             direction.y = 0f;
@@ -70,7 +71,7 @@ namespace HexSailingPilot.Terrain
             {
                 var position = start + direction * distance;
 
-                var hasDepth = TryGetDepth(position, ref waterVolume, out var depth);
+                var hasDepth = TryGetNavigationDepth(position, out var depth);
                 var isSafe = hasDepth && IsNavigableDepth(depth);
 
                 results.Add(new WaterDepthScanModel(
@@ -82,7 +83,7 @@ namespace HexSailingPilot.Terrain
             }
 
             var destinationPosition = start + direction * routeDistance;
-            var destinationHasDepth = TryGetDepth(destinationPosition, ref waterVolume, out var destinationDepth);
+            var destinationHasDepth = TryGetNavigationDepth(destinationPosition, out var destinationDepth);
             var destinationIsSafe = destinationHasDepth && IsNavigableDepth(destinationDepth);
 
             results.Add(new WaterDepthScanModel(
@@ -153,6 +154,47 @@ namespace HexSailingPilot.Terrain
         internal static bool IsNavigableDepth(float depth)
         {
             return depth > MinimumNavigableDepth;
+        }
+
+        internal static bool TryGetNavigationDepth(Vector3 position, out float depth)
+        {
+            depth = 0f;
+
+            if (WorldGenerator.instance == null)
+            {
+                return false;
+            }
+
+            var terrainHeight = WorldGenerator.instance.GetHeight(position);
+            var waterLevel = 30f;
+
+            depth = waterLevel - terrainHeight;
+
+            return true;
+        }
+
+        internal static void CompareNavigationDepth(Vector3 position)
+        {
+            if (!TryGetNavigationDepth(position, out var navigationDepth))
+            {
+                return;
+            }
+
+            WaterVolume waterVolume = null;
+
+            if (!TryGetDepth(position, ref waterVolume, out var actualDepth))
+            {
+                return;
+            }
+
+            var difference = Mathf.Abs(navigationDepth - actualDepth);
+
+            Plugin.Log.LogInfo(
+                $"Navigation depth comparison | " +
+                $"Position: {position} | " +
+                $"Procedural: {navigationDepth:F1}m | " +
+                $"Actual: {actualDepth:F1}m | " +
+                $"Difference: {difference:F1}m");
         }
     }
 }
